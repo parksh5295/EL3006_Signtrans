@@ -361,8 +361,8 @@ def test(
         XentLoss(pad_index=txt_vocab.stoi[PAD_TOKEN], smoothing=0.0)
         if do_translation
         else None
-        )
-        if use_cuda:
+    )
+    if use_cuda:
         if recognition_loss_function:
             recognition_loss_function.cuda()
         if translation_loss_function:
