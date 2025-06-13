@@ -17,7 +17,7 @@ import numpy as np
 
 import torch
 from torch import nn, Tensor
-from torchtext.data import Dataset
+from signjoey.data import SignTranslationDataset
 import yaml
 from signjoey.vocabulary import GlossVocabulary, TextVocabulary
 
@@ -116,9 +116,9 @@ def set_seed(seed: int):
 
 
 def log_data_info(
-    train_data: Dataset,
-    valid_data: Dataset,
-    test_data: Dataset,
+    train_data: SignTranslationDataset,
+    valid_data: SignTranslationDataset,
+    test_data: SignTranslationDataset,
     gls_vocab: GlossVocabulary,
     txt_vocab: TextVocabulary,
     logging_function: Callable[[str], None],
