@@ -32,7 +32,8 @@ training:
   model_dir: "~/asic-3/output_data/late_fusion_run_20240321"
   
   # Whether to overwrite existing checkpoints.
-  overwrite: false
+  # overwrite: false
+  overwrite: true
   
   # Random seed
   random_seed: 42
