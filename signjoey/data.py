@@ -19,6 +19,7 @@ from signjoey.vocabulary import (
     EOS_TOKEN,
 )
 from signjoey.batch import Batch
+import pandas as pd
 
 class SignTranslationDataset(Dataset):
     """
@@ -75,8 +76,15 @@ class SignTranslationDataset(Dataset):
         self.frame_subsampling_ratio = None
 
     def _load_data(self, path: str, max_len: int = -1):
-        with open(path, "rb") as f:
-            data = pickle.load(f)
+        # with open(path, "rb") as f:
+        #     data = pickle.load(f)
+        """Load data from TSV file."""
+        # Read TSV file
+        df = pd.read_csv(path, sep="\t")
+        
+        # Convert DataFrame to list of dictionaries
+        data = df.to_dict("records")
+        
         if max_len > 0:
             return data[:max_len]
         return data
