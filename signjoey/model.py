@@ -1,7 +1,7 @@
 # coding: utf-8
 import tensorflow as tf
 
-tf.config.set_visible_devices([], "GPU")
+# tf.config.set_visible_devices([], "GPU")
 
 import numpy as np
 import torch.nn as nn
