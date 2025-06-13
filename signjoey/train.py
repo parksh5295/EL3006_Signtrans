@@ -325,20 +325,25 @@ class TrainManager:
         # returns loss, gloss_loss, translation_loss
         return total_loss, recognition_loss, translation_loss
 
-    def train_and_validate(self, train_data: SignTranslationDataset, dev_data: SignTranslationDataset) -> None:
+    # def train_and_validate(self, train_data: SignTranslationDataset, dev_data: SignTranslationDataset) -> None:
+    def train_and_validate(self, train_data: SignTranslationDataset, dev_data: SignTranslationDataset, gls_vocab: GlossVocabulary, txt_vocab: TextVocabulary) -> None:
         """
-        Train the model and validate it from time to time on the dev set.
+        Main training loop
         """
         self.train_data = train_data
+        self.gls_vocab = gls_vocab
+        self.txt_vocab = txt_vocab
 
         train_iter = make_data_iter(
-            train_data,
+            # train_data,
+            dataset=train_data,
             batch_size=self.batch_size,
             batch_type=self.batch_type,
+            gls_vocab=gls_vocab,
+            txt_vocab=txt_vocab,
             shuffle=self.shuffle,
-            gls_vocab=self.gls_vocab,
-            txt_vocab=self.txt_vocab,
-            level=self.config["data"]["level"],
+            # level=self.config["data"]["level"],
+            num_workers=self.num_workers,
         )
         self.epoch = 1
         self.logger.info(
@@ -585,7 +590,10 @@ def train(cfg_file: str) -> None:
         trainer._validate(dev_data)
 
     # train the model
-    trainer.train_and_validate(train_data=train_data, dev_data=dev_data)
+    # trainer.train_and_validate(train_data=train_data, dev_data=dev_data)
+    trainer.train_and_validate(
+        train_data=train_data, dev_data=dev_data, gls_vocab=gls_vocab, txt_vocab=txt_vocab
+    )
 
     # test the model
     if test_data is not None:

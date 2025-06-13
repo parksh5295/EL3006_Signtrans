@@ -70,8 +70,8 @@ training:
   clipping_threshold: 1.0
   
   # Loss function weights
-  # recognition_loss_weight: 0.3
-  recognition_loss_weight: 0.0
+  recognition_loss_weight: 0.3
+  # recognition_loss_weight: 0.0
   translation_loss_weight: 1.0
   
   # Validation and logging frequency
