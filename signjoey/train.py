@@ -12,7 +12,6 @@ from typing import List
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
-from torchtext.data.datasets import Dataset
 from signjoey.model import SignModel, build_model
 from signjoey.batch import Batch
 from signjoey.helpers import (
@@ -25,7 +24,7 @@ from signjoey.helpers import (
     set_seed,
     SymbolicLinks,
 )
-from signjoey.data import load_data, make_data_iter
+from signjoey.data import load_data, make_data_iter, SignTranslationDataset
 from signjoey.vocabulary import GlossVocabulary, TextVocabulary
 from signjoey.loss import XentLoss
 from signjoey.prediction import validate_on_data
@@ -163,7 +162,7 @@ class TrainManager:
 
     def _log_examples(
         self,
-        data: Dataset,
+        data: SignTranslationDataset,
         batch_size: int,
         gls_vocab: GlossVocabulary,
         txt_vocab: TextVocabulary,
@@ -318,7 +317,10 @@ class TrainManager:
         self.tensorboard_writer.add_scalar("train/translation_loss", translation_loss.item(), self.step)
         self.tensorboard_writer.add_scalar("train/learning_rate", self.scheduler.learning_rate, self.step)
 
-    def train_and_validate(self, train_data: Dataset, dev_data: Dataset) -> None:
+        # returns loss, gloss_loss, translation_loss
+        return total_loss, recognition_loss, translation_loss
+
+    def train_and_validate(self, train_data: SignTranslationDataset, dev_data: SignTranslationDataset) -> None:
         """
         Train the model and validate it from time to time on the dev set.
         """
@@ -455,7 +457,7 @@ class TrainManager:
 
     def testing(
         self,
-        test_data: Dataset,
+        test_data: SignTranslationDataset,
         gls_vocab: GlossVocabulary,
         txt_vocab: TextVocabulary,
     ):
