@@ -104,8 +104,8 @@ class TextVocabulary(Vocabulary):
         """
         super().__init__()
         self.specials = [UNK_TOKEN, PAD_TOKEN, BOS_TOKEN, EOS_TOKEN]
-        self.DEFAULT_UNK_ID = lambda: 0
-        self.stoi = defaultdict(self.DEFAULT_UNK_ID)
+        self.DEFAULT_UNK_ID = 0
+        self.stoi = defaultdict(lambda: self.DEFAULT_UNK_ID)
 
         if tokens is not None:
             self._from_list(tokens)
@@ -157,8 +157,8 @@ class GlossVocabulary(Vocabulary):
         """
         super().__init__()
         self.specials = [SIL_TOKEN, UNK_TOKEN, PAD_TOKEN]
-        self.DEFAULT_UNK_ID = lambda: 1
-        self.stoi = defaultdict(self.DEFAULT_UNK_ID)
+        self.DEFAULT_UNK_ID = 1
+        self.stoi = defaultdict(lambda: self.DEFAULT_UNK_ID)
 
         if tokens is not None:
             self._from_list(tokens)
