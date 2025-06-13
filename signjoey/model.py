@@ -384,6 +384,13 @@ class SignModel(nn.Module):
             )
         )
 
+    def count_params(self) -> int:
+        """
+        Count the number of trainable parameters in the model.
+        :return:
+        """
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
 
 def build_model(
     cfg: dict,
