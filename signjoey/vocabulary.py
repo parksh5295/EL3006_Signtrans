@@ -1,9 +1,14 @@
 # coding: utf-8
+"""
+Vocabulary module for gloss and text
+"""
+from collections import Counter, defaultdict
+from typing import List, TYPE_CHECKING
+
 import numpy as np
 
-from collections import defaultdict, Counter
-from typing import List
-from signjoey.data import SignTranslationDataset
+if TYPE_CHECKING:
+    from signjoey.data import SignTranslationDataset
 
 SIL_TOKEN = "<si>"
 UNK_TOKEN = "<unk>"
