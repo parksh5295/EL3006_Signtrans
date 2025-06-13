@@ -4,16 +4,16 @@ name: "late_fusion_experiment"
 # Data settings
 # ==============================================================================
 data:
-  train: "~/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.train.how2sign.tsv"
-  dev: "~/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.val.how2sign.tsv"
-  test: "~/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.test.how2sign.tsv"
+  train: "/home/work/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.train.how2sign.tsv"
+  dev: "/home/work/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.val.how2sign.tsv"
+  test: "/home/work/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.test.how2sign.tsv"
 
   # The path to the parent folder where the isolated features are stored.
   sgn_dirs:
     # This order must match the order of model.encoder.late_fusion.feature_dims.
-    pose: "~/asic-3/input_data/separated_features/pose"
-    hands: "~/asic-3/input_data/separated_features/hands"
-    mouth: "~/asic-3/input_data/separated_features/mouth"
+    pose: "/home/work/asic-3/input_data/separated_features/pose"
+    hands: "/home/work/asic-3/input_data/separated_features/hands"
+    mouth: "/home/work/asic-3/input_data/separated_features/mouth"
   
   # Specify the column names in the tsv file (default values).
   sequence_key: "id"
@@ -29,7 +29,7 @@ data:
 # ==============================================================================
 training:
   # The path to save all results (checkpoints, logs).
-  model_dir: "~/asic-3/output_data/late_fusion_run_20240321"
+  model_dir: "/home/work/asic-3/output_data/late_fusion_run_20240321"
   
   # Whether to overwrite existing checkpoints.
   # overwrite: false
