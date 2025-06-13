@@ -3,7 +3,7 @@ import numpy as np
 
 from collections import defaultdict, Counter
 from typing import List
-from torchtext.data import Dataset
+from signjoey.data import SignTranslationDataset
 
 SIL_TOKEN = "<si>"
 UNK_TOKEN = "<unk>"
@@ -195,7 +195,7 @@ def build_vocab(
     field: str,
     max_size: int,
     min_freq: int,
-    dataset: Dataset = None,
+    dataset: SignTranslationDataset = None,
     vocab_file: str = None,
     sentences: List[List[str]] = None,
 ) -> Vocabulary:
@@ -227,11 +227,14 @@ def build_vocab(
             tokens = [token for sent in sentences for token in sent]
         elif dataset:
             tokens = []
-            for i in dataset.examples:
+            # for i in dataset.examples:
+            for item in dataset.data:
                 if field == "gls":
-                    tokens.extend(i.gls)
+                    # tokens.extend(i.gls)
+                    tokens.extend(item[dataset.gls_key].split())
                 elif field == "txt":
-                    tokens.extend(i.txt)
+                    # tokens.extend(i.txt)
+                    tokens.extend(item[dataset.txt_key].split())
                 else:
                     raise ValueError("Unknown field type")
         else:

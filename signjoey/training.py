@@ -9,6 +9,7 @@ import os
 import shutil
 import time
 import queue
+from typing import List, Optional, Tuple, Dict
 
 from signjoey.model import build_model
 from signjoey.batch import Batch
@@ -32,8 +33,7 @@ from signjoey.metrics import wer_single
 from signjoey.vocabulary import SIL_TOKEN
 from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
-from torchtext.data import Dataset
-from typing import List, Dict
+from torch.utils.data import DataLoader
 
 
 # pylint: disable=too-many-instance-attributes
