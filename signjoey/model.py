@@ -441,6 +441,10 @@ def build_model(
                 == decoder_cfg["hidden_size"]
             ), "for transformer, sgn embedding, encoder and decoder dimensions must be the same"
         
+        # Remove emb_dropout from encoder_cfg if it exists
+        encoder_cfg = encoder_cfg.copy()
+        encoder_cfg.pop("emb_dropout", None)
+        
         encoder = TransformerEncoder(
             **encoder_cfg,
             emb_dropout=enc_emb_dropout,
