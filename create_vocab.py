@@ -41,8 +41,8 @@ def main():
     all_texts = []
     
     for df in [train_df, val_df, test_df]:
-        all_glosses.extend(df["gloss"].str.split().tolist())
-        all_texts.extend(df["text"].str.split().tolist())
+        all_glosses.extend(df["glosses"].str.split().tolist())
+        all_texts.extend(df["translation"].str.split().tolist())
     
     # Flatten lists
     all_glosses = [token for sent in all_glosses for token in sent]
