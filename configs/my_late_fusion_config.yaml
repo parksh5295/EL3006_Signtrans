@@ -7,6 +7,10 @@ data:
   train: "/home/work/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.train.how2sign.tsv"
   dev: "/home/work/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.val.how2sign.tsv"
   test: "/home/work/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.test.how2sign.tsv"
+  
+  # Vocabulary files
+  gls_vocab: "/home/work/asic-3/code/data/gloss.vocab"
+  txt_vocab: "/home/work/asic-3/code/data/text.vocab"
 
   # The path to the parent folder where the isolated features are stored.
   sgn_dirs:
