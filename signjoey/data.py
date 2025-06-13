@@ -78,9 +78,16 @@ class SignTranslationDataset(Dataset):
     def _load_data(self, path: str, max_len: int = -1):
         # with open(path, "rb") as f:
         #     data = pickle.load(f)
-        """Load data from TSV file."""
-        # Read TSV file
-        df = pd.read_csv(path, sep="\t")
+        """Load data from TSV/CSV file."""
+        # Read file
+        if path.endswith(".tsv"):
+            df = pd.read_csv(path, sep="\t")
+        elif path.endswith(".csv"):
+            # Use Python engine to auto-detect separator for CSVs
+            df = pd.read_csv(path, sep=None, engine="python")
+        else:
+            # Assume TSV for backward compatibility
+            df = pd.read_csv(path, sep="\t")
         
         # Convert DataFrame to list of dictionaries
         data = df.to_dict("records")
