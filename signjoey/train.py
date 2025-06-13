@@ -25,7 +25,12 @@ from signjoey.helpers import (
     # SymbolicLinks,
 )
 from signjoey.data import load_data, make_data_iter, SignTranslationDataset
-from signjoey.vocabulary import GlossVocabulary, TextVocabulary
+from signjoey.vocabulary import (
+    PAD_TOKEN,
+    GlossVocabulary,
+    TextVocabulary,
+    build_vocab,
+)
 from signjoey.loss import XentLoss
 from signjoey.prediction import validate_on_data
 from signjoey.scheduler import Scheduler, PyTorchScheduler, SignJoeyScheduler
@@ -135,7 +140,7 @@ class TrainManager:
 
         if self.model.do_recognition:
             recognition_loss_fun = torch.nn.CTCLoss(
-                blank=self.model.gls_vocab.stoi[self.model.gls_vocab.pad_token],
+                blank=self.model.gls_vocab.stoi[PAD_TOKEN],
                 zero_infinity=True,
             )
         else:
@@ -143,7 +148,7 @@ class TrainManager:
 
         if self.model.do_translation:
             translation_loss_fun = XentLoss(
-                pad_index=self.model.txt_vocab.stoi[self.model.txt_vocab.pad_token],
+                pad_index=self.model.txt_vocab.stoi[PAD_TOKEN],
                 smoothing=train_config["label_smoothing"],
             )
         else:
