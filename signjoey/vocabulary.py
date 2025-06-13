@@ -226,14 +226,14 @@ def build_vocab(
         if sentences:
             tokens = [token for sent in sentences for token in sent]
         elif dataset:
-        tokens = []
-        for i in dataset.examples:
-            if field == "gls":
-                tokens.extend(i.gls)
-            elif field == "txt":
-                tokens.extend(i.txt)
-            else:
-                raise ValueError("Unknown field type")
+            tokens = []
+            for i in dataset.examples:
+                if field == "gls":
+                    tokens.extend(i.gls)
+                elif field == "txt":
+                    tokens.extend(i.txt)
+                else:
+                    raise ValueError("Unknown field type")
         else:
             raise ValueError("Either dataset or sentences must be provided.")
 
