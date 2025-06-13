@@ -515,7 +515,11 @@ def train(cfg_file: str) -> None:
     """
     cfg = load_config(cfg_file)
 
+    # make model directory
+    model_dir = make_model_dir(cfg["training"]["model_dir"], overwrite=cfg["training"].get("overwrite", False))
+    
     # make logger
+    '''
     model_dir = make_model_dir(
         cfg["training"]["model_dir"], overwrite=cfg["training"].get("overwrite", False),
     )
@@ -524,6 +528,11 @@ def train(cfg_file: str) -> None:
 
     # copy config to model directory
     shutil.copy2(cfg_file, f"{model_dir}/config.yaml")
+    '''
+    logger = make_logger(model_dir)
+    
+    # log the configuration
+    log_cfg(cfg, logger)
 
     # set the random seed
     set_seed(seed=cfg["training"].get("random_seed", 42))
