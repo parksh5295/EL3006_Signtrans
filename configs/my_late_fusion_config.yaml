@@ -4,9 +4,9 @@ name: "late_fusion_experiment"
 # Data settings
 # ==============================================================================
 data:
-  train: "~/asic-3/input_data/tsv_files_how2sign/train.tsv"
-  dev: "~/asic-3/input_data/tsv_files_how2sign/val.tsv"
-  test: "~/asic-3/input_data/tsv_files_how2sign/test.tsv"
+  train: "~/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.train.how2sign.tsv"
+  dev: "~/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.val.how2sign.tsv"
+  test: "~/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.test.how2sign.tsv"
 
   # The path to the parent folder where the isolated features are stored.
   sgn_dirs:
@@ -16,9 +16,9 @@ data:
     mouth: "~/asic-3/input_data/separated_features/mouth"
   
   # Specify the column names in the tsv file (default values).
-  sequence_key: "name"
-  gls_key: "gloss"
-  txt_key: "text"
+  sequence_key: "id"
+  gls_key: "glosses"
+  txt_key: "translation"
 
   level: "word"
   txt_lowercase: true
