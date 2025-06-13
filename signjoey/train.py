@@ -22,7 +22,7 @@ from signjoey.helpers import (
     make_model_dir,
     make_logger,
     set_seed,
-    SymbolicLinks,
+    # SymbolicLinks,
 )
 from signjoey.data import load_data, make_data_iter, SignTranslationDataset
 from signjoey.vocabulary import GlossVocabulary, TextVocabulary
