@@ -547,6 +547,16 @@ def train(cfg_file: str) -> None:
         data_cfg=cfg["data"]
     )
 
+    if txt_vocab is None:
+        raise ValueError("txt_vocab returned from load_data is None. Check vocabulary loading.")
+
+    if train_data is not None:
+        # build vocabulary from training data
+        if "gls_vocab" not in cfg["data"]:
+            cfg["data"]["gls_vocab"] = gls_vocab
+        if "txt_vocab" not in cfg["data"]:
+            cfg["data"]["txt_vocab"] = txt_vocab
+
     # build model
     model = build_model(
         cfg=cfg, gls_vocab=gls_vocab, txt_vocab=txt_vocab,
