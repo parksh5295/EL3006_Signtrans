@@ -4,9 +4,12 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from typing import List
 
 from signjoey.helpers import freeze_params
 from signjoey.transformer_layers import TransformerEncoderLayer, PositionalEncoding
+from signjoey.embeddings import SpatialEmbeddings
+from signjoey.attention import TimeAlignmentModule
 
 
 # pylint: disable=abstract-method
@@ -172,23 +175,50 @@ class TransformerEncoder(Encoder):
         dropout: float = 0.1,
         emb_dropout: float = 0.1,
         freeze: bool = False,
-        **kwargs
+        fusion_cfg: dict = None,
+        **kwargs,
     ):
         """
         Initializes the Transformer.
         :param hidden_size: hidden size and size of embeddings
         :param ff_size: position-wise feed-forward layer size.
-          (Typically this is 2*hidden_size.)
         :param num_layers: number of layers
         :param num_heads: number of heads for multi-headed attention
         :param dropout: dropout probability for Transformer layers
         :param emb_dropout: Is applied to the input (word embeddings).
         :param freeze: freeze the parameters of the encoder during training
+        :param fusion_cfg: configuration for late fusion
         :param kwargs:
         """
         super(TransformerEncoder, self).__init__()
+        
+        self.emb_dropout = nn.Dropout(p=emb_dropout)
+        self._output_size = hidden_size
+        
+        # Fusion configuration
+        self.fusion_cfg = fusion_cfg if fusion_cfg is not None else {}
+        self.use_fusion = self.fusion_cfg.get("enabled", False)
 
-        # build all (num_layers) layers
+        self.pe = PositionalEncoding(hidden_size)
+
+        if self.use_fusion:
+            feature_dims = self.fusion_cfg["feature_dims"]
+            self.projection_layers = nn.ModuleList([
+                SpatialEmbeddings(
+                    embedding_dim=hidden_size,
+                    input_size=dim,
+                    num_heads=num_heads,
+                    dropout=emb_dropout
+                ) for dim in feature_dims
+            ])
+            self.alignment_module = TimeAlignmentModule(
+                hidden_size=hidden_size,
+                num_heads=num_heads,
+                # Add other necessary params for TimeAlignmentModule from fusion_cfg
+            )
+        else:
+            pass
+
         self.layers = nn.ModuleList(
             [
                 TransformerEncoderLayer(
@@ -202,37 +232,52 @@ class TransformerEncoder(Encoder):
         )
 
         self.layer_norm = nn.LayerNorm(hidden_size, eps=1e-6)
-        self.pe = PositionalEncoding(hidden_size)
-        self.emb_dropout = nn.Dropout(p=emb_dropout)
+        # self.pe = PositionalEncoding(hidden_size)
+        # self.emb_dropout = nn.Dropout(p=emb_dropout)
 
-        self._output_size = hidden_size
+        # self._output_size = hidden_size
 
         if freeze:
             freeze_params(self)
 
     # pylint: disable=arguments-differ
     def forward(
-        self, embed_src: Tensor, src_length: Tensor, mask: Tensor
+        self,
+        mask: Tensor,
+        embed_src: Tensor = None,
+        src_length: Tensor = None,
+        features: List[Tensor] = None,
+        sgn_embed: nn.Module = None, # sgn_embed is now handled internally for fusion
     ) -> (Tensor, Tensor):
         """
         Pass the input (and mask) through each layer in turn.
         Applies a Transformer encoder to sequence of embeddings x.
         The input mini-batch x needs to be sorted by src length.
         x and mask should have the same dimensions [batch, time, dim].
-
-        :param embed_src: embedded src inputs,
-            shape (batch_size, src_len, embed_size)
+        :param embed_src: embedded src inputs for single-stream
         :param src_length: length of src inputs
-            (counting tokens before padding), shape (batch_size)
-        :param mask: indicates padding areas (zeros where padding), shape
-            (batch_size, src_len, embed_size)
+        :param mask: indicates padding areas (zeros where padding)
+        :param features: list of feature tensors for multi-stream
+        :param sgn_embed: embedding module (unused in fusion mode)
         :return:
-            - output: hidden states with
-                shape (batch_size, max_length, directions*hidden),
-            - hidden_concat: last hidden state with
-                shape (batch_size, directions*hidden)
+            - output: hidden states with shape (batch_size, max_length, hidden)
+            - hidden_concat: None in case of Transformer
         """
-        x = self.pe(embed_src)  # add position encoding to word embeddings
+        if self.use_fusion:
+            assert features is not None
+            # 1. Project each feature stream
+            projected_features = [
+                self.projection_layers[i](feat, mask) for i, feat in enumerate(features)
+            ]
+            # 2. Align features
+            x = self.alignment_module(projected_features)
+            # Positional encoding is often applied after fusion
+            x = self.pe(x)
+
+        else:
+            assert embed_src is not None
+            x = self.pe(embed_src)  # add position encoding to word embeddings
+        
         x = self.emb_dropout(x)
 
         for layer in self.layers:

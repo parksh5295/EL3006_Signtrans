@@ -1,6 +1,7 @@
 import os
 from typing import Optional, Dict, Any
 import numpy as np
+import torch
 
 from .feature_extractors.openpose_extractor import OpenPoseExtractor
 from .feature_extractors.lipnet_extractor import LipNetExtractor

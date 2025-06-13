@@ -23,7 +23,7 @@ from signjoey.vocabulary import (
 from signjoey.batch import Batch
 from signjoey.helpers import freeze_params
 from torch import Tensor
-from typing import Union
+from typing import Union, List
 
 
 class SignModel(nn.Module):
@@ -82,21 +82,34 @@ class SignModel(nn.Module):
         sgn_lengths: Tensor,
         txt_input: Tensor,
         txt_mask: Tensor = None,
+        features: List[Tensor] = None,
+        feature_lengths: List[Tensor] = None,
     ) -> (Tensor, Tensor, Tensor, Tensor):
         """
         First encodes the source sentence.
         Then produces the target one word at a time.
 
-        :param sgn: source input
+        :param sgn: source input (either a single tensor or None if features are used)
         :param sgn_mask: source mask
         :param sgn_lengths: length of source inputs
         :param txt_input: target input
         :param txt_mask: target mask
+        :param features: list of source feature tensors
+        :param feature_lengths: list of source feature lengths
         :return: decoder outputs
         """
-        encoder_output, encoder_hidden = self.encode(
-            sgn=sgn, sgn_mask=sgn_mask, sgn_length=sgn_lengths
-        )
+        if features is not None:
+            # Use the new multi-stream feature processing
+            encoder_output, encoder_hidden = self.encode(
+                features=features,
+                feature_lengths=feature_lengths,
+                sgn_mask=sgn_mask, # sgn_mask might still be needed by the decoder
+            )
+        else:
+            # Use the original single-stream processing
+            encoder_output, encoder_hidden = self.encode(
+                sgn=sgn, sgn_mask=sgn_mask, sgn_length=sgn_lengths
+            )
 
         if self.do_recognition:
             # Gloss Recognition Part
@@ -125,21 +138,39 @@ class SignModel(nn.Module):
         return decoder_outputs, gloss_probabilities
 
     def encode(
-        self, sgn: Tensor, sgn_mask: Tensor, sgn_length: Tensor
+        self, 
+        sgn: Tensor = None, 
+        sgn_mask: Tensor = None, 
+        sgn_length: Tensor = None,
+        features: List[Tensor] = None,
+        feature_lengths: List[Tensor] = None,
     ) -> (Tensor, Tensor):
         """
         Encodes the source sentence.
+        Can handle either a single tensor or a list of feature tensors.
 
         :param sgn:
         :param sgn_mask:
         :param sgn_length:
+        :param features:
+        :param feature_lengths:
         :return: encoder outputs (output, hidden_concat)
         """
-        return self.encoder(
-            embed_src=self.sgn_embed(x=sgn, mask=sgn_mask),
-            src_length=sgn_length,
-            mask=sgn_mask,
-        )
+        if features is not None:
+            # Late-fusion path
+            return self.encoder(
+                features=features,
+                feature_lengths=feature_lengths,
+                sgn_embed=self.sgn_embed, # Pass embedding module to the encoder
+                mask=sgn_mask,
+            )
+        else:
+            # Standard path
+            return self.encoder(
+                embed_src=self.sgn_embed(x=sgn, mask=sgn_mask),
+                src_length=sgn_length,
+                mask=sgn_mask,
+            )
 
     def decode(
         self,
@@ -201,6 +232,8 @@ class SignModel(nn.Module):
             sgn_lengths=batch.sgn_lengths,
             txt_input=batch.txt_input,
             txt_mask=batch.txt_mask,
+            features=batch.features,
+            feature_lengths=batch.feature_lengths,
         )
 
         if self.do_recognition:
@@ -254,12 +287,15 @@ class SignModel(nn.Module):
             stacked_attention_scores: attention scores for batch
         """
 
-        encoder_output, encoder_hidden = self.encode(
-            sgn=batch.sgn, sgn_mask=batch.sgn_mask, sgn_length=batch.sgn_lengths
-        )
-
         if self.do_recognition:
             # Gloss Recognition Part
+            encoder_output, encoder_hidden = self.encode(
+                sgn=batch.sgn,
+                sgn_mask=batch.sgn_mask,
+                sgn_length=batch.sgn_lengths,
+                features=batch.features,
+                feature_lengths=batch.feature_lengths,
+            )
             # N x T x C
             gloss_scores = self.gloss_output_layer(encoder_output)
             # N x T x C
@@ -351,91 +387,117 @@ class SignModel(nn.Module):
 
 def build_model(
     cfg: dict,
-    sgn_dim: int,
     gls_vocab: GlossVocabulary,
     txt_vocab: TextVocabulary,
     do_recognition: bool = True,
     do_translation: bool = True,
 ) -> SignModel:
     """
-    Build and initialize the model according to the configuration.
+    Build and set up model object.
 
-    :param cfg: dictionary configuration containing model specifications
-    :param sgn_dim: feature dimension of the sign frame representation, i.e. 2560 for EfficientNet-7.
-    :param gls_vocab: sign gloss vocabulary
-    :param txt_vocab: spoken language word vocabulary
+    :param cfg: full configuration dictionary
+    :param gls_vocab: gloss vocabulary
+    :param txt_vocab: text vocabulary
+    :param do_recognition: whether to build the recognition part of the model
+    :param do_translation: whether to build the translation part of the model
     :return: built and initialized model
-    :param do_recognition: flag to build the model with recognition output.
-    :param do_translation: flag to build the model with translation decoder.
     """
+    model_cfg = cfg["model"]
+    
+    # Assert values are within acceptable ranges
+    assert model_cfg["embeddings"]["norm_type"] in ["batch", "layer", "none"]
+    assert model_cfg["encoder"]["type"] in ["transformer", "recurrent"]
+    assert model_cfg["decoder"]["type"] in ["transformer", "recurrent"]
 
-    txt_padding_idx = txt_vocab.stoi[PAD_TOKEN]
+    sgn_embed_cfg = model_cfg["embeddings"]
+    encoder_cfg = model_cfg["encoder"]
+    decoder_cfg = model_cfg["decoder"]
 
-    sgn_embed: SpatialEmbeddings = SpatialEmbeddings(
-        **cfg["encoder"]["embeddings"],
-        num_heads=cfg["encoder"]["num_heads"],
-        input_size=sgn_dim,
+    # Late Fusion configuration
+    fusion_cfg = encoder_cfg.get("late_fusion", None)
+    use_fusion = fusion_cfg.get("enabled", False) if fusion_cfg else False
+
+    sgn_embed = None
+    if not use_fusion:
+        # For single-stream, sgn_dim is required.
+        sgn_dim = model_cfg.get("sgn_dim")
+        if not sgn_dim:
+            raise ValueError("`sgn_dim` must be specified in model config for non-fusion models.")
+        
+        sgn_embed = SpatialEmbeddings(
+            **sgn_embed_cfg,
+            num_heads=encoder_cfg["num_heads"],
+            input_size=sgn_dim,
+        )
+
+    # Build Encoder
+    enc_dropout = encoder_cfg.get("dropout", 0.0)
+    enc_emb_dropout = encoder_cfg.get("emb_dropout", 0.0)
+    if encoder_cfg["type"] == "transformer":
+        if not use_fusion:
+            assert (
+                encoder_cfg["hidden_size"]
+                == sgn_embed.embedding_dim
+                == decoder_cfg["hidden_size"]
+            ), "for transformer, sgn embedding, encoder and decoder dimensions must be the same"
+        
+        encoder = TransformerEncoder(
+            **encoder_cfg,
+            emb_dropout=enc_emb_dropout,
+            dropout=enc_dropout,
+            fusion_cfg=fusion_cfg,
+        )
+    else: # recurrent (fusion not implemented for recurrent)
+        if use_fusion:
+            raise NotImplementedError("Late fusion is not implemented for RecurrentEncoder.")
+        encoder = RecurrentEncoder(
+            **encoder_cfg,
+            emb_size=sgn_embed.embedding_dim,
+            emb_dropout=enc_emb_dropout,
+            dropout=enc_dropout,
+        )
+
+    # Build Decoder
+    dec_dropout = decoder_cfg.get("dropout", 0.1)
+    dec_emb_dropout = decoder_cfg.get("emb_dropout", 0.1)
+    if decoder_cfg["type"] == "transformer":
+        decoder = TransformerDecoder(
+            **decoder_cfg,
+            encoder=encoder,
+            vocab_size=len(txt_vocab),
+            emb_dropout=dec_emb_dropout,
+            dropout=dec_dropout,
+        )
+    else:  # recurrent
+        decoder = RecurrentDecoder(
+            **decoder_cfg,
+            encoder=encoder,
+            vocab_size=len(txt_vocab),
+            emb_dropout=dec_emb_dropout,
+            dropout=dec_dropout,
+        )
+
+    # Spoken Language Embeddings
+    txt_embed: Embeddings = Embeddings(
+        **model_cfg["embeddings"],
+        vocab_size=len(txt_vocab),
+        padding_idx=txt_vocab.stoi[PAD_TOKEN],
     )
 
-    # build encoder
-    enc_dropout = cfg["encoder"].get("dropout", 0.0)
-    enc_emb_dropout = cfg["encoder"]["embeddings"].get("dropout", enc_dropout)
-    if cfg["encoder"].get("type", "recurrent") == "transformer":
-        assert (
-            cfg["encoder"]["embeddings"]["embedding_dim"]
-            == cfg["encoder"]["hidden_size"]
-        ), "for transformer, emb_size must be hidden_size"
-
-        encoder = TransformerEncoder(
-            **cfg["encoder"],
-            emb_size=sgn_embed.embedding_dim,
-            emb_dropout=enc_emb_dropout,
-        )
-    else:
-        encoder = RecurrentEncoder(
-            **cfg["encoder"],
-            emb_size=sgn_embed.embedding_dim,
-            emb_dropout=enc_emb_dropout,
-        )
-
+    # Recognition Output Layer
+    gloss_output_layer = nn.Linear(encoder.output_size, len(gls_vocab))
     if do_recognition:
-        gloss_output_layer = nn.Linear(encoder.output_size, len(gls_vocab))
-        if cfg["encoder"].get("freeze", False):
-            freeze_params(gloss_output_layer)
-    else:
-        gloss_output_layer = None
-
-    # build decoder and word embeddings
-    if do_translation:
-        txt_embed: Union[Embeddings, None] = Embeddings(
-            **cfg["decoder"]["embeddings"],
-            num_heads=cfg["decoder"]["num_heads"],
-            vocab_size=len(txt_vocab),
-            padding_idx=txt_padding_idx,
-        )
-        dec_dropout = cfg["decoder"].get("dropout", 0.0)
-        dec_emb_dropout = cfg["decoder"]["embeddings"].get("dropout", dec_dropout)
-        if cfg["decoder"].get("type", "recurrent") == "transformer":
-            decoder = TransformerDecoder(
-                **cfg["decoder"],
-                encoder=encoder,
-                vocab_size=len(txt_vocab),
-                emb_size=txt_embed.embedding_dim,
-                emb_dropout=dec_emb_dropout,
+        if "recognition_loss_weight" not in cfg["training"]:
+            cfg["training"]["recognition_loss_weight"] = 1.0
+        if cfg["training"]["recognition_loss_weight"] < 1.0:
+            # Use a smaller representation for the gloss output layer
+            gloss_output_layer = nn.Sequential(
+                nn.Linear(encoder.output_size, encoder.output_size // 2),
+                nn.ReLU(),
+                nn.Linear(encoder.output_size // 2, len(gls_vocab)),
             )
-        else:
-            decoder = RecurrentDecoder(
-                **cfg["decoder"],
-                encoder=encoder,
-                vocab_size=len(txt_vocab),
-                emb_size=txt_embed.embedding_dim,
-                emb_dropout=dec_emb_dropout,
-            )
-    else:
-        txt_embed = None
-        decoder = None
 
-    model: SignModel = SignModel(
+    model = SignModel(
         encoder=encoder,
         gloss_output_layer=gloss_output_layer,
         decoder=decoder,
@@ -447,22 +509,16 @@ def build_model(
         do_translation=do_translation,
     )
 
-    if do_translation:
-        # tie softmax layer with txt embeddings
-        if cfg.get("tied_softmax", False):
-            # noinspection PyUnresolvedReferences
-            if txt_embed.lut.weight.shape == model.decoder.output_layer.weight.shape:
-                # (also) share txt embeddings and softmax layer:
-                # noinspection PyUnresolvedReferences
-                model.decoder.output_layer.weight = txt_embed.lut.weight
-            else:
-                raise ValueError(
-                    "For tied_softmax, the decoder embedding_dim and decoder "
-                    "hidden_size must be the same."
-                    "The decoder must be a Transformer."
-                )
+    if "load_weights" in model_cfg:
+        model = load_model_from_file(model, model_cfg["load_weights"])
+    
+    # Freeze params
+    if "freeze" in model_cfg:
+        for name, child in model.named_children():
+            if name in model_cfg["freeze"]:
+                freeze_params(child)
 
-    # custom initialization of model parameters
-    initialize_model(model, cfg, txt_padding_idx)
+    # Initialize weights
+    initialize_model(model, model_cfg, "xavier_uniform")
 
     return model
