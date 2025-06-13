@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from typing import List, TYPE_CHECKING, Optional
 
 import numpy as np
+import os
 
 if TYPE_CHECKING:
     from signjoey.data import SignTranslationDataset
@@ -46,6 +47,9 @@ class Vocabulary:
 
         :param file: path to file where the vocabulary is loaded from
         """
+        if not os.path.exists(file):
+            raise FileNotFoundError(f"Vocabulary file not found at {file}")
+
         tokens = []
         with open(file, "r", encoding="utf-8") as open_file:
             for line in open_file:
