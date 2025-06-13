@@ -31,18 +31,28 @@ def main():
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
+    # Define column types
+    dtype_dict = {
+        'glosses': str,
+        'translation': str
+    }
+    
     # Read TSV files
-    train_df = pd.read_csv(os.path.join(data_dir, "cvpr23.fairseq.i3d.train.how2sign.tsv"), sep="\t")
-    val_df = pd.read_csv(os.path.join(data_dir, "cvpr23.fairseq.i3d.val.how2sign.tsv"), sep="\t")
-    test_df = pd.read_csv(os.path.join(data_dir, "cvpr23.fairseq.i3d.test.how2sign.tsv"), sep="\t")
+    train_df = pd.read_csv(os.path.join(data_dir, "cvpr23.fairseq.i3d.train.how2sign.tsv"), sep="\t", dtype=dtype_dict)
+    val_df = pd.read_csv(os.path.join(data_dir, "cvpr23.fairseq.i3d.val.how2sign.tsv"), sep="\t", dtype=dtype_dict)
+    test_df = pd.read_csv(os.path.join(data_dir, "cvpr23.fairseq.i3d.test.how2sign.tsv"), sep="\t", dtype=dtype_dict)
     
     # Combine all data
     all_glosses = []
     all_texts = []
     
     for df in [train_df, val_df, test_df]:
-        all_glosses.extend(df["glosses"].str.split().tolist())
-        all_texts.extend(df["translation"].str.split().tolist())
+        # Convert to string and handle NaN values
+        glosses = df["glosses"].fillna("").astype(str)
+        translations = df["translation"].fillna("").astype(str)
+        
+        all_glosses.extend(glosses.str.split().tolist())
+        all_texts.extend(translations.str.split().tolist())
     
     # Flatten lists
     all_glosses = [token for sent in all_glosses for token in sent]
