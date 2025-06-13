@@ -4,25 +4,37 @@ name: "late_fusion_experiment"
 # Data settings
 # ==============================================================================
 data:
-  train: "/home/work/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.train.how2sign.tsv"
-  dev: "/home/work/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.val.how2sign.tsv"
-  test: "/home/work/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.test.how2sign.tsv"
+  # train: "/home/work/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.train.how2sign.tsv"
+  # dev: "/home/work/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.val.how2sign.tsv"
+  # test: "/home/work/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign/cvpr23.fairseq.i3d.test.how2sign.tsv"
+  train: "~/asic-3/input_data/csv_data/how2sign_realigned_train.csv"
+  dev: "~/asic-3/input_data/csv_data/how2sign_realigned_val.csv"
+  test: "~/asic-3/input_data/csv_data/how2sign_realigned_test.csv"
   
   # Vocabulary files
-  gls_vocab: "/home/work/asic-3/code/data/gloss.vocab"
-  txt_vocab: "/home/work/asic-3/code/data/text.vocab"
+  # gls_vocab: "/home/work/asic-3/code/data/gloss.vocab"
+  # txt_vocab: "/home/work/asic-3/code/data/text.vocab"
+  gls_vocab: "~/asic-3/input_data/csv_data/gloss.vocab"
+  txt_vocab: "~/asic-3/input_data/csv_data/text.vocab"
 
   # The path to the parent folder where the isolated features are stored.
+  # TODO: Please verify these paths point to the correct OpenPose feature directories.
   sgn_dirs:
     # This order must match the order of model.encoder.late_fusion.feature_dims.
-    pose: "/home/work/asic-3/input_data/separated_features/pose"
-    hands: "/home/work/asic-3/input_data/separated_features/hands"
-    mouth: "/home/work/asic-3/input_data/separated_features/mouth"
+    # pose: "/home/work/asic-3/input_data/separated_features/pose"
+    # hands: "/home/work/asic-3/input_data/separated_features/hands"
+    # mouth: "/home/work/asic-3/input_data/separated_features/mouth"
+    pose: "/path/to/your/split/openpose_features/pose"
+    hands: "/path/to/your/split/openpose_features/hands"
+    face: "/path/to/your/split/openpose_features/face"
   
   # Specify the column names in the tsv file (default values).
-  sequence_key: "id"
-  gls_key: "glosses"
-  txt_key: "translation"
+  # sequence_key: "id"
+  #gls_key: "glosses"
+  #txt_key: "translation"
+  sequence_key: "SENTENCE_NAME"
+  gls_key: "SENTENCE"
+  txt_key: "SENTENCE"
 
   level: "word"
   txt_lowercase: true
@@ -111,9 +123,10 @@ model:
     # Late Fusion settings
     late_fusion:
       enabled: true
-      # Specify the feature dimensions in the order of sgn_dirs (pose, hands, mouth).
-      # Check the actual dimension of the mouth feature and modify if necessary.
-      feature_dims: [99, 126, 240] 
+      # Specify the feature dimensions in the order of sgn_dirs.
+      # TODO: Please verify these match the actual dimensions of your OpenPose features.
+      # feature_dims: [99, 126, 240]
+      feature_dims: [75, 126, 210] # Example dimensions for [Pose, Hands, Face]
 
   decoder:
     type: "transformer"
