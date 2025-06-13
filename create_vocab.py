@@ -25,16 +25,16 @@ def create_vocab_file(tokens: List[str], output_file: str, min_freq: int = 1) ->
 
 def main():
     # Paths
-    data_dir = os.path.expanduser("~/asic-3/input_data/tsv_files_how2sign")
+    data_dir = os.path.expanduser("~/asic-3/input_data/tsv_files_how2sign/tsv_files_how2sign")
     output_dir = "data"
     
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
     # Read TSV files
-    train_df = pd.read_csv(os.path.join(data_dir, "train.tsv"), sep="\t")
-    val_df = pd.read_csv(os.path.join(data_dir, "val.tsv"), sep="\t")
-    test_df = pd.read_csv(os.path.join(data_dir, "test.tsv"), sep="\t")
+    train_df = pd.read_csv(os.path.join(data_dir, "cvpr23.fairseq.i3d.train.how2sign.tsv"), sep="\t")
+    val_df = pd.read_csv(os.path.join(data_dir, "cvpr23.fairseq.i3d.val.how2sign.tsv"), sep="\t")
+    test_df = pd.read_csv(os.path.join(data_dir, "cvpr23.fairseq.i3d.test.how2sign.tsv"), sep="\t")
     
     # Combine all data
     all_glosses = []
