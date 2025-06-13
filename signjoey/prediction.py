@@ -10,10 +10,10 @@ import pickle as pickle
 import time
 import torch.nn as nn
 from torch import Tensor
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 from typing import List, Optional, Tuple
-from torchtext.data import Dataset
 from signjoey.loss import XentLoss
 from signjoey.helpers import (
     bpe_postprocess,
