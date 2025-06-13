@@ -93,8 +93,7 @@ class TrainManager:
 
         # model parameters
         self.fp16 = train_config.get("fp16", False)
-        if self.fp16:
-            self.scaler = torch.cuda.amp.GradScaler()
+        self.scaler = torch.cuda.amp.GradScaler() if self.fp16 else None
         self.last_best_ckpt = ""
         self.last_latest_ckpt = ""
         self.step = 0
@@ -102,6 +101,8 @@ class TrainManager:
         self.best_ckpt_iteration = 0
         self.best_ckpt_score = -1
         self.best_ckpt_file = ""
+
+        self.num_workers = config["data"].get("num_workers", 4)
 
     def _build_scheduler(self, train_config):
         # build scheduler
