@@ -7,7 +7,7 @@ name = "pypi"
 torch = "==2.1.0"
 torchvision = "==0.16.0"
 torchtext = "==0.16.0"
-tensorflow = {version = "==2.15.0", extras = ["gpu"]}
+tensorflow = "==2.15.0"
 tensorflow-estimator = "==2.15.0"
 tensorboard = "==2.15.0"
 scikit-learn = "==1.4.1.post1"
