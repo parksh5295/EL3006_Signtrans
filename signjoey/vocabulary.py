@@ -3,7 +3,7 @@
 Vocabulary module for gloss and text
 """
 from collections import Counter, defaultdict
-from typing import List, TYPE_CHECKING
+from typing import List, TYPE_CHECKING, Optional
 
 import numpy as np
 
@@ -200,7 +200,8 @@ def build_vocab(
     field: str,
     max_size: int,
     min_freq: int,
-    dataset: SignTranslationDataset = None,
+    # dataset: SignTranslationDataset = None,
+    dataset: Optional["SignTranslationDataset"] = None,
     vocab_file: str = None,
     sentences: List[List[str]] = None,
 ) -> Vocabulary:
