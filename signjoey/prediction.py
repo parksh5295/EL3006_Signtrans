@@ -268,6 +268,12 @@ def validate_on_data(
     )
 
 
+def _write_to_file(file_path: str, sequence_ids: List[str], hypotheses: List[str]):
+    with open(file_path, mode="w", encoding="utf-8") as out_file:
+        for seq, hyp in zip(sequence_ids, hypotheses):
+            out_file.write(seq + "|" + " ".join(hyp) + "\n")
+
+
 # pylint: disable-msg=logging-too-many-args
 def test(
     cfg_file, ckpt: str, output_path: str = None, logger: logging.Logger = None
@@ -457,18 +463,13 @@ def test(
                     logger.info("Scores on %s set: %s", data_set_name, scores)
 
                     if output_path is not None:
-    def _write_to_file(file_path: str, sequence_ids: List[str], hypotheses: List[str]):
-        with open(file_path, mode="w", encoding="utf-8") as out_file:
-            for seq, hyp in zip(sequence_ids, hypotheses):
-                                    out_file.write(seq + "|" + " ".join(hyp) + "\n")
-
-        if do_recognition:
+                        if do_recognition:
                             rec_output_path = "{}.{}.BW_{:03d}.gls".format(
                                 output_path, data_set_name, rec_beam_size
                             )
                             _write_to_file(rec_output_path, sequences, gls_hyp)
 
-        if do_translation:
+                        if do_translation:
                             tr_output_path = "{}.{}.BW_{:02d}.A_{:.1f}.txt".format(
                                 output_path, data_set_name, tr_beam_size, tr_alpha,
                             )
