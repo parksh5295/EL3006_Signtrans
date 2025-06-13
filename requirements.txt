@@ -1,0 +1,38 @@
+# Main ML Libraries
+torch==2.1.0
+torchvision==0.16.0
+torchtext==0.16.0
+tensorflow==2.15.0
+scikit-learn==1.4.1.post1
+pandas==2.2.1
+numpy==1.26.4
+# Visualization
+matplotlib==3.8.3
+plotly==5.19.0
+# Utilities
+tqdm==4.66.2
+pyyaml==6.0.1
+natsort==8.4.0
+sacrebleu==2.4.0
+sentencepiece==0.2.0
+opencv-python==4.9.0.80
+h5py==3.10.0
+# Other
+absl-py==2.1.0
+attrs==23.2.0
+cycler==0.12.1
+kiwisolver==1.4.5
+packaging==23.2
+pyparsing==3.1.2
+python-dateutil==2.8.2 # Pinned to 2.8.2 as higher versions can cause issues with older matplotlib
+six==1.16.0
+werkzeug==3.0.1
+# Removed obsolete/unnecessary packages:
+# asn1crypto, astor, cachetools, certifi, cffi, chardet, conda,
+# conda-package-handling, cryptography, gast, google-auth, google-auth-oauthlib,
+# google-pasta, grpcio, idna, importlib-metadata, joblib, Keras-Applications,
+# Keras-Preprocessing, keyboard, Markdown, more-itertools, oauthlib, opt-einsum,
+# pluggy, portalocker, protobuf, py, pyasn1, pyasn1-modules, pycosat,
+# pycparser, pyOpenSSL, PySocks, pytest, pytz, requests, requests-oauthlib,
+# retrying, rsa, ruamel-yaml, tensorboard, tensorflow-estimator, termcolor,
+# typing, urllib3, warmup-scheduler, wcwidth, wrapt, xmltodict, zipp
