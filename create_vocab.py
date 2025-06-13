@@ -97,7 +97,7 @@ def main_openpose_csv():
         test_file="how2sign_realigned_test.csv",
         gloss_col="SENTENCE",  # Assuming gloss is in 'SENTENCE'
         text_col="SENTENCE",  # Assuming text is also in 'SENTENCE'
-        separator=",",
+        separator="\t",
         output_dir="data/openpose",
     )
 
