@@ -529,6 +529,6 @@ def build_model(
                 freeze_params(child)
 
     # Initialize weights
-    initialize_model(model, model_cfg, "xavier_uniform")
+    initialize_model(model, model_cfg, txt_vocab.stoi[PAD_TOKEN])
 
     return model
