@@ -12,7 +12,7 @@ from typing import List
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
-from torchtext.data import Dataset
+from torchtext.data.datasets import Dataset
 from signjoey.model import SignModel, build_model
 from signjoey.batch import Batch
 from signjoey.helpers import (
