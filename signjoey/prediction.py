@@ -149,22 +149,23 @@ def validate_on_data(
         total_rec_loss, total_tr_loss = 0, 0
         total_num_txt, total_num_gls = 0, 0
 
-            '''
-            batch_recognition_loss, batch_translation_loss = model.get_loss_for_batch(
-                batch=batch,
-                recognition_loss_function=recognition_loss_function
-                if do_recognition
-                else None,
-                translation_loss_function=translation_loss_function
-                if do_translation
-                else None,
-                recognition_loss_weight=recognition_loss_weight
-                if do_recognition
-                else None,
-                translation_loss_weight=translation_loss_weight
-                if do_translation
-                else None,
-            '''
+        '''
+        batch_recognition_loss, batch_translation_loss = model.get_loss_for_batch(
+            batch=batch,
+            recognition_loss_function=recognition_loss_function
+            if do_recognition
+            else None,
+            translation_loss_function=translation_loss_function
+            if do_translation
+            else None,
+            recognition_loss_weight=recognition_loss_weight
+            if do_recognition
+            else None,
+            translation_loss_weight=translation_loss_weight
+            if do_translation
+            else None,
+        )
+        '''
 
         for batch in valid_iter:
             sort_reverse_index = batch.sort_by_sgn_lengths()
@@ -197,6 +198,7 @@ def validate_on_data(
                 translation_max_output_length=translation_max_output_length
                 if do_translation
                 else None,
+            )
             '''
             
             gls_hyp, txt_hyp, _ = model.run_batch(
@@ -221,30 +223,30 @@ def validate_on_data(
             if do_translation:
                 '''
                 all_txt_outputs.extend(batch_txt_predictions[sort_reverse_index])
-            all_attention_scores.extend(
-                batch_attention_scores[sort_reverse_index]
-                if batch_attention_scores is not None
-                else []
-            )
+                all_attention_scores.extend(
+                    batch_attention_scores[sort_reverse_index]
+                    if batch_attention_scores is not None
+                    else []
+                )
                 '''
                 all_txt_hyp.extend(model.txt_vocab.arrays_to_sentences(txt_hyp))
                 all_txt_ref.extend(model.txt_vocab.arrays_to_sentences(batch.txt.cpu().numpy()))
 
     scores = {}
-        if do_recognition:
+    if do_recognition:
         # Phoenix cleanup
         cln_fn = clean_phoenix_2014_trans if dataset_version == "phoenix_2014_trans" else clean_phoenix_2014
         cleaned_gls_ref = [cln_fn(" ".join(t)) for t in all_gls_ref]
         cleaned_gls_hyp = [cln_fn(" ".join(t)) for t in all_gls_hyp]
         scores.update(wer_list(references=cleaned_gls_ref, hypotheses=cleaned_gls_hyp))
 
-        if do_translation:
-            join_char = " " if level in ["word", "bpe"] else ""
+    if do_translation:
+        join_char = " " if level in ["word", "bpe"] else ""
         txt_ref = [join_char.join(t) for t in all_txt_ref]
         txt_hyp = [join_char.join(t) for t in all_txt_hyp]
-            if level == "bpe":
-                txt_ref = [bpe_postprocess(v) for v in txt_ref]
-                txt_hyp = [bpe_postprocess(v) for v in txt_hyp]
+        if level == "bpe":
+            txt_ref = [bpe_postprocess(v) for v in txt_ref]
+            txt_hyp = [bpe_postprocess(v) for v in txt_hyp]
         scores["bleu"] = bleu(references=txt_ref, hypotheses=txt_hyp)
         scores["chrf"] = chrf(references=txt_ref, hypotheses=txt_hyp)
         scores["rouge"] = rouge(references=txt_ref, hypotheses=txt_hyp)
