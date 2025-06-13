@@ -466,6 +466,11 @@ def build_model(
     dec_dropout = decoder_cfg.get("dropout", 0.1)
     dec_emb_dropout = decoder_cfg.get("emb_dropout", 0.1)
     if decoder_cfg["type"] == "transformer":
+        # Remove emb_dropout and dropout from decoder_cfg if they exist
+        decoder_cfg = decoder_cfg.copy()
+        decoder_cfg.pop("emb_dropout", None)
+        decoder_cfg.pop("dropout", None)
+        
         decoder = TransformerDecoder(
             **decoder_cfg,
             encoder=encoder,
