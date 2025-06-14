@@ -35,6 +35,7 @@ six = "==1.16.0"
 werkzeug = "==3.0.1"
 moviepy = "*"
 editdistance = "*"
+async-timeout = "*"
 
 [dev-packages]
 
