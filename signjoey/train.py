@@ -639,9 +639,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("Joey-NMT")
     parser.add_argument(
         "config",
-        default="configs/default.yaml",
+        default="configs/my_late_fusion_config.yaml",
         type=str,
-        help="Training configuration file.",
+        nargs="?",
+        help="Training config file.",
     )
     args = parser.parse_args()
     train(cfg_file=args.config) 

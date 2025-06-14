@@ -11,3 +11,5 @@ base_annotations/
 Experiments/
 
 requirements.txt
+
+*.sh
