@@ -43,7 +43,7 @@ def merge_datasets(keypoint_split: Dataset, annotation_df: pd.DataFrame) -> Data
     Merge keypoint dataset with annotation dataframe using a robust
     normalized key matching strategy.
     """
-    sentence_lookup = get_lookup_dict(annotation_df)
+    # sentence_lookup = get_lookup_dict(annotation_df)
     
     def get_normalized_key_from_hf(hf_key: str) -> str:
         # Extracts and normalizes the key from Hugging Face __key__
@@ -55,6 +55,20 @@ def merge_datasets(keypoint_split: Dataset, annotation_df: pd.DataFrame) -> Data
             return f"{part1}-{part2}"
         # Fallback for keys that don't match the expected pattern
         return dir_name.split('-rgb_front')[0]
+
+    sentence_lookup = get_lookup_dict(annotation_df)
+    
+    # --- NEW DEBUG ---
+    print("\n--- Debug: Key Matching ---")
+    hf_keys_sample = [
+        get_normalized_key_from_hf(item['__key__']) 
+        for item in keypoint_split.select(range(min(5, len(keypoint_split))))
+    ]
+    csv_keys_sample = list(sentence_lookup.keys())[:5]
+    print(f"Sample Normalized HF Keys: {hf_keys_sample}")
+    print(f"Sample Annotation Keys:    {csv_keys_sample}")
+    print("---------------------------\n")
+    # --- END DEBUG ---
 
     sentences = []
     unmatched_count = 0
@@ -165,26 +179,28 @@ def build_vocab(cfg, dataset, vocab_type="gls"):
     Builds a vocabulary from the dataset.
     Assumes `dataset` has `gls` and `txt` attributes.
     """
-    level = cfg["level"]
+    # level = cfg["level"]
+    level = cfg.get("level", "word") # Default to 'word' level
     max_size = cfg.get(f"{vocab_type}_max_size", -1)
     min_freq = cfg.get(f"{vocab_type}_min_freq", 1)
     
     vocab_file = cfg.get(f"{vocab_type}_vocab", None)
     
-    if vocab_file is None:
+    if vocab_file and os.path.exists(vocab_file):
+        # Load from file
+        if vocab_type == "gls":
+            return GlossVocabulary(file=vocab_file)
+        else: # txt
+            return TextVocabulary(file=vocab_file, level=level)
+    else:
         # Build from scratch
         if vocab_type == "gls":
             sentences = [d["gls"] for d in dataset]
-            return GlossVocabulary(sentences, max_size=max_size, min_freq=min_freq)
+            # return GlossVocabulary(sentences, max_size=max_size, min_freq=min_freq)
+            return GlossVocabulary(tokens=sentences)
         else: # txt
             sentences = [d["txt"] for d in dataset]
-            return TextVocabulary(sentences, max_size=max_size, min_freq=min_freq, level=level)
-    else:
-        # Load from file
-        if vocab_type == "gls":
-            return GlossVocabulary(file_path=vocab_file)
-        else:
-            return TextVocabulary(file_path=vocab_file, level=level)
+            return TextVocabulary(tokens=sentences, level=level)
 
 
 class SignTranslationDataset(Dataset):
