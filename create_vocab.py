@@ -123,7 +123,7 @@ if __name__ == "__main__":
     num_cpus = max(1, os.cpu_count() // 2)
 
     main_huggingface(
-        hf_dataset_id="my-username/how2sign_keypoints",
+        hf_dataset_id="Saintbook/how2sign_keypoints",
         gloss_col="SENTENCE",
         text_col="SENTENCE",
         output_dir="data/openpose",
