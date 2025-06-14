@@ -10,8 +10,11 @@ import time
 from typing import List
 
 import torch
+import torch.distributed as dist
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 from signjoey.model import SignModel, build_model
 from signjoey.batch import Batch
 from signjoey.helpers import (
@@ -42,23 +45,34 @@ class TrainManager:
     Manages training loop, checks checkpoints, logs training progress.
     """
 
-    def __init__(self, model: SignModel, config: dict) -> None:
+    def __init__(self, model: SignModel, config: dict, rank: int = 0, world_size: int = 1) -> None:
         """
         Creates a new TrainManager for a model, specified as in configuration.
 
         :param model: torch module defining the model
         :param config: dictionary containing the training configurations
+        :param rank: process rank for distributed training
+        :param world_size: number of processes for distributed training
         """
         train_config = config["training"]
 
         self.config = config
         self.model = model
+        self.rank = rank
+        self.world_size = world_size
+        self.is_main_process = self.rank == 0
 
         # files for logging and storing
         self.model_dir = train_config["model_dir"]
         self.logging_freq = train_config.get("logging_freq", 100)
-        self.valid_report_file = f"{self.model_dir}/validations.txt"
-
+        # self.valid_report_file = f"{self.model_dir}/validations.txt"
+        
+        if self.is_main_process:
+            self.valid_report_file = f"{self.model_dir}/validations.txt"
+            self.tensorboard_writer = SummaryWriter(log_dir=os.path.join(self.model_dir, "runs"))
+        else:
+            self.valid_report_file = None
+            self.tensorboard_writer = None
         # training
         self.shuffle = train_config["shuffle"]
         self.epochs = train_config["epochs"]
@@ -73,13 +87,13 @@ class TrainManager:
 
         # validation
         self.validation_freq = train_config.get("validation_freq", 1000)
-        self.num_valid_log = train_config.get("num_valid_log", 5)
+        self.num_valid_log = train_config.get("num_valid_log", 5) if self.is_main_process else 0
 
         # logging
         self.logger = logging.getLogger(__name__)
 
         # tensorboard
-        self.tensorboard_writer = SummaryWriter(log_dir=os.path.join(self.model_dir, "runs"))
+        # self.tensorboard_writer = SummaryWriter(log_dir=os.path.join(self.model_dir, "runs"))
 
         # scheduler
         self.scheduler, self.optimizer = self._build_scheduler(train_config)
@@ -178,6 +192,9 @@ class TrainManager:
         """
         forward an example from the data and log it to the console
         """
+        if not self.is_main_process:
+            return
+
         data_iter = make_data_iter(
             dataset=data,
             batch_size=batch_size,
@@ -215,13 +232,18 @@ class TrainManager:
 
         :param name: checkpoint name
         """
+        if not self.is_main_process:
+            return
+            
         model_path = f"{self.model_dir}/{name}.ckpt"
+        # unwrap DDP model
+        model_state = self.model.module.state_dict() if self.world_size > 1 else self.model.state_dict()
         state = {
             "step": self.step,
             "epoch": self.epoch,
             "best_ckpt_score": self.best_ckpt_score,
             "best_ckpt_iteration": self.best_ckpt_iteration,
-            "model_state": self.model.state_dict(),
+            "model_state": model_state,
             "optimizer_state": self.optimizer.state_dict(),
             "scheduler_state": self.scheduler.state_dict()
             if self.scheduler is not None
@@ -332,15 +354,18 @@ class TrainManager:
         """
         self.train_data = train_data
 
-        train_iter = make_data_iter(
-            train_data,
+        train_iter, train_sampler = make_data_iter(
+            dataset=train_data,
             batch_size=self.batch_size,
             batch_type=self.batch_type,
             shuffle=self.shuffle,
+            num_workers=self.num_workers,
             gls_vocab=self.gls_vocab,
             txt_vocab=self.txt_vocab,
             level=self.config["data"]["level"],
-            num_workers=self.num_workers,
+            use_ddp=self.world_size > 1,
+            rank=self.rank,
+            world_size=self.world_size,
         )
         self.epoch = 1
         self.logger.info(
@@ -514,6 +539,14 @@ class TrainManager:
                 )
 
 
+def ddp_setup():
+    dist.init_process_group(backend="nccl")
+    world_size = int(os.environ["WORLD_SIZE"])
+    rank = int(os.environ["RANK"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    return rank, world_size, local_rank
+
 def train(cfg_file: str) -> None:
     """
     Main training function.
@@ -521,25 +554,29 @@ def train(cfg_file: str) -> None:
     :param cfg_file: path to configuration file
     """
     cfg = load_config(cfg_file)
+    
+    # DDP setup
+    use_ddp = torch.cuda.is_available() and torch.cuda.device_count() > 1
+    if use_ddp:
+        rank, world_size, local_rank = ddp_setup()
+        is_main_process = rank == 0
+    else:
+        rank, world_size, local_rank = 0, 1, 0
+        is_main_process = True
 
     # make model directory
-    model_dir = make_model_dir(cfg["training"]["model_dir"], overwrite=cfg["training"].get("overwrite", False))
+    model_dir = make_model_dir(
+        cfg["training"]["model_dir"],
+        overwrite=cfg["training"].get("overwrite", False),
+        rank=rank,
+    )
     
     # make logger
-    '''
-    model_dir = make_model_dir(
-        cfg["training"]["model_dir"], overwrite=cfg["training"].get("overwrite", False),
-    )
-    make_logger(model_dir, mode="train")
-    logger = logging.getLogger(__name__)
-
-    # copy config to model directory
-    shutil.copy2(cfg_file, f"{model_dir}/config.yaml")
-    '''
-    logger = make_logger(model_dir)
+    logger = make_logger(model_dir, rank=rank)
     
     # log the configuration
-    log_cfg(cfg, logger)
+    if is_main_process:
+        log_cfg(cfg, logger)
 
     # set the random seed
     set_seed(seed=cfg["training"].get("random_seed", 42))
@@ -560,19 +597,20 @@ def train(cfg_file: str) -> None:
             cfg["data"]["txt_vocab"] = txt_vocab
 
     # build model
+    device = torch.device(local_rank if use_ddp else "cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(
-        cfg=cfg, gls_vocab=gls_vocab, txt_vocab=txt_vocab,
+        cfg=cfg, gls_vocab=gls_vocab, txt_vocab=txt_vocab, device=device
     )
-    logger.info(f"Number of trainable parameters: {model.count_params()}")
+    
+    if use_ddp:
+        model = DDP(model, device_ids=[local_rank])
 
-    # a trained model asks for the fields from the data
-    # if model.do_recognition:
-    #     model.gls_vocab = gls_vocab
-    # if model.do_translation:
-    #     model.txt_vocab = txt_vocab
+    # for multi-gpu training, connect Hans-Juergen
+    if is_main_process:
+        logger.info(model)
 
     # create a training manager
-    trainer = TrainManager(model=model, config=cfg)
+    trainer = TrainManager(model=model, config=cfg, rank=rank, world_size=world_size)
 
     # load checkpoint if specified
     if "load_model" in cfg["training"]:
@@ -592,6 +630,9 @@ def train(cfg_file: str) -> None:
     # test the model
     if test_data is not None:
         trainer.testing(test_data=test_data, gls_vocab=gls_vocab, txt_vocab=txt_vocab)
+
+    if use_ddp:
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

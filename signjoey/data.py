@@ -7,8 +7,9 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.sampler import Sampler
+from torch.utils.data.distributed import DistributedSampler
 from torch.nn.utils.rnn import pad_sequence
-from typing import List, Dict
+from typing import List, Dict, Tuple
 from signjoey.vocabulary import (
     Vocabulary,
     GlossVocabulary,
@@ -221,17 +222,36 @@ def make_data_iter(
     # train: bool = False,
     shuffle: bool = False,
     num_workers: int = 4,
-) -> DataLoader:
+    use_ddp: bool = False,
+    rank: int = 0,
+    world_size: int = 1,
+) -> Tuple[DataLoader, DistributedSampler]:
     """
-    Create a data loader for a dataset.
+    Returns a data loader for a given dataset.
+    :return:
+        - data_loader: torch.utils.data.DataLoader object
+        - sampler: torch.utils.data.distributed.DistributedSampler object
     """
     if batch_type == "token":
-        batch_sampler = TokenBatchSampler(
-            dataset, batch_size=batch_size, type="gls", shuffle=shuffle
-        )
-        return DataLoader(
-            dataset,
-            batch_sampler=batch_sampler,
+        # This is not yet supported with DDP
+        # ...
+        pass
+    else:  # sentence-based batching
+        sampler = None
+        if use_ddp:
+            sampler = DistributedSampler(
+                dataset, num_replicas=world_size, rank=rank, shuffle=shuffle
+            )
+        
+        # When using a sampler, shuffle must be False for the DataLoader
+        dataloader_shuffle = shuffle and sampler is None
+
+        data_loader = DataLoader(
+            dataset=dataset,
+            batch_size=batch_size,
+            shuffle=dataloader_shuffle,
+            sampler=sampler,
+            drop_last=False,
             collate_fn=PadCollate(
                 gls_vocab=gls_vocab,
                 txt_vocab=txt_vocab,
@@ -240,21 +260,7 @@ def make_data_iter(
             ),
             num_workers=num_workers,
         )
-    
-    # "sentence" batch_type
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        drop_last=False,
-        collate_fn=PadCollate(
-            gls_vocab=gls_vocab,
-            txt_vocab=txt_vocab,
-            level=level,
-            txt_pad_index=txt_vocab.stoi[PAD_TOKEN],
-        ),
-        num_workers=num_workers,
-    )
+    return data_loader, sampler
 
 
 def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, TextVocabulary):
