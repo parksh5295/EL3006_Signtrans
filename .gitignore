@@ -9,3 +9,5 @@ openpose/
 keypoints/
 base_annotations/
 Experiments/
+
+requirements.txt
