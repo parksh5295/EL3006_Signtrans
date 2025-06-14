@@ -22,20 +22,22 @@ import yaml
 from signjoey.vocabulary import GlossVocabulary, TextVocabulary
 
 
-def make_model_dir(model_dir: str, overwrite: bool = False) -> str:
+def make_model_dir(model_dir: str, overwrite: bool = False, rank: int = 0) -> str:
     """
     Create a new directory for the model.
 
     :param model_dir: path to model directory
     :param overwrite: whether to overwrite an existing directory
+    :param rank: process rank for distributed training
     :return: path to model directory
     """
-    if os.path.isdir(model_dir):
-        if not overwrite:
-            raise FileExistsError("Model directory exists and overwriting is disabled.")
-        # delete previous directory to start with empty dir again
-        shutil.rmtree(model_dir)
-    os.makedirs(model_dir)
+    if rank == 0:  # Only create directory on main process
+        if os.path.isdir(model_dir):
+            if not overwrite:
+                raise FileExistsError("Model directory exists and overwriting is disabled.")
+            # delete previous directory to start with empty dir again
+            shutil.rmtree(model_dir)
+        os.makedirs(model_dir)
     return model_dir
 
 
