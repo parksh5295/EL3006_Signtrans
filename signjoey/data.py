@@ -48,6 +48,7 @@ def merge_datasets(keypoint_split: Dataset, annotation_df: pd.DataFrame) -> Data
     # The key normalization logic from the previous step is correct.
     # We just need to use it to look up entries.
     def get_normalized_key_from_hf(hf_key: str) -> str:
+        # Extracts and normalizes the key from Hugging Face __key__
         dir_name = os.path.dirname(hf_key).split('/')[-1]
         if len(dir_name) > 11 and dir_name[11] == '_':
             part1 = dir_name[:11]
@@ -55,6 +56,18 @@ def merge_datasets(keypoint_split: Dataset, annotation_df: pd.DataFrame) -> Data
             return f"{part1}-{part2}"
         # Fallback for keys that don't match the expected pattern
         return dir_name.split('-rgb_front')[0]
+
+    # --- NEW DEBUG ---
+    print("\n--- Debug: Key Transformation ---")
+    for i in range(min(3, len(keypoint_split))):
+        raw_key = keypoint_split[i]['__key__']
+        normalized_key = get_normalized_key_from_hf(raw_key)
+        print(f"Raw HF Key: {raw_key}  =>  Normalized: {normalized_key}")
+    
+    csv_keys_sample = list(sentence_lookup.keys())[:3]
+    print(f"Sample Annotation Keys for comparison: {csv_keys_sample}")
+    print("----------------------------------\n")
+    # --- END DEBUG ---
 
     sentences = []
     unmatched_count = 0
