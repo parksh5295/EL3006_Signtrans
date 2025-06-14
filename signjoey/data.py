@@ -296,13 +296,19 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
     def merge_datasets(keypoint_split, annotation_df):
         """
         Merge keypoint dataset with annotation dataframe by extracting
-        the video name from the keypoint file path (__key__).
+        and matching the video name from the keypoint file path (__key__).
         """
         
         def get_video_name_from_key(key: str) -> str:
-            # Extracts 'anxhVQxvPGs_21-5-rgb_front' from a path like
-            # 'openpose_output/json/anxhVQxvPGs_21-5-rgb_front/...'
-            return os.path.dirname(key).split('/')[-1]
+            # Extracts a directory name like '1QeMNh_DAqo_0-5-rgb_front'
+            dir_name = os.path.dirname(key).split('/')[-1]
+            
+            # Transform the key to match the CSV's VIDEO_NAME format.
+            # e.g., '1QeMNh_DAqo_0-5-rgb_front' -> '1QeMNh_DAqo-0-5-rgb_front'
+            # Assumes the YouTube video ID is 11 characters long.
+            if len(dir_name) > 11 and dir_name[11] == '_':
+                return dir_name[:11] + '-' + dir_name[12:]
+            return dir_name
 
         # Map each keypoint entry to its corresponding sentence
         sentences = []
@@ -310,10 +316,11 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
             key = item['__key__']
             video_name = get_video_name_from_key(key)
             try:
-                # Find the sentence using the extracted video_name
+                # Find the sentence using the transformed video_name
                 sentence = annotation_df.loc[video_name, "SENTENCE"]
             except KeyError:
                 # Handle cases where a video_name might not be in the annotations
+                # This warning should appear much less frequently now.
                 print(f"Warning: VIDEO_NAME '{video_name}' from key '{key}' not found in annotations. Using empty string.")
                 sentence = ""
             sentences.append(sentence)
