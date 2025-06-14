@@ -22,6 +22,7 @@ from signjoey.vocabulary import (
     EOS_TOKEN,
 )
 from signjoey.batch import Batch
+from signjoey.phoenix_utils.phoenix_cleanup import clean_phoenix_2014
 
 # ==============================================================================
 # Helper functions for data loading and merging
@@ -101,77 +102,97 @@ def load_annotations(csv_root: str, split_name: str) -> pd.DataFrame:
 # Main data loading function
 # ==============================================================================
 
-def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, TextVocabulary):
+def __load_and_filter_sents(data_cfg) -> pd.DataFrame:
+    df = pd.read_csv(data_cfg["csv_root"] + f"/{data_cfg['split']}.csv", sep='\\t')
+    df = df[df.SENTENCE_NAME.isin(data_cfg['include_only'])]
+    df.SENTENCE = df.SENTENCE.apply(
+        lambda x: clean_phoenix_2014(x, reclean=True)[1]
+    )
+    df = df.drop_duplicates(subset=['SENTENCE_NAME'])
+    return df
+
+def __filter_and_align_gls(example, df):
+    # This function is likely the source of the original error.
+    # It assumes 'name' in HF dataset maps to 'SENTENCE_NAME' in CSV.
+    example['SENTENCE'] = df[df.SENTENCE_NAME == example['name']].SENTENCE.values[0]
+    return example
+
+def __tokenize_and_build_vocab(
+    data_cfg, datasets, gls_key, txt_key
+):
+    # Get combined gloss and text sentences
+    gls_sentences = [d[gls_key] for d in datasets["train"]]
+    txt_sentences = [d[txt_key] for d in datasets["train"]]
+
+    # Build vocabularies
+    gls_vocab = SignVocab(
+        tokens=gls_sentences,
+        **data_cfg["gls_vocab"]
+    )
+    txt_vocab = TextVocab(
+        tokens=txt_sentences,
+        **data_cfg["txt_vocab"]
+    )
+    return gls_vocab, txt_vocab
+
+def load_data(
+    data_cfg: dict,
+) -> (Dataset, Dataset, Dataset, SignVocab, TextVocab):
     """
-    Load data using the custom Hugging Face dataset loading script.
-    The script handles downloading, extracting, and merging the data.
+    Load data from files, create vocabulary, and prepare datasets.
+    This is the original data loading function that relies on mapping.
     """
-    # 1. Load the dataset using the local loading script
-    hf_dataset_id = data_cfg["hf_dataset"]
-    print(f"Loading dataset using local script: {hf_dataset_id}")
-    all_splits: DatasetDict = load_dataset(hf_dataset_id)
-
-    '''
-    # 2. Load the text annotations from local CSV files
-    csv_root = os.path.expanduser(data_cfg["csv_root"])
-    print(f"Loading text annotations from local CSV files in: {csv_root}")
-    
-    train_ann = load_annotations(csv_root, "train")
-    val_ann = load_annotations(csv_root, "val")
-    test_ann = load_annotations(csv_root, "test")
-
-    # 3. Merge text annotations into the keypoint datasets
-    print("Merging text data into keypoint dataset...")
-    keypoints_ds["train"] = merge_datasets(keypoints_ds["train"], train_ann)
-    keypoints_ds["validation"] = merge_datasets(keypoints_ds["validation"], val_ann)
-    if "test" in keypoints_ds:
-        keypoints_ds["test"] = merge_datasets(keypoints_ds["test"], test_ann)
-
-    # 4. Create SignTranslationDataset objects for each split
-    '''
-
-    # 2. Get config values
-    feature_keys = data_cfg["feature_keys"]
-    sequence_key = data_cfg["sequence_key"]
-    gls_key = data_cfg["gls_key"]
-    txt_key = data_cfg["txt_key"]
-
-    # 3. Create SignTranslationDataset objects for each split
-    train_data = SignTranslationDataset(
-        hf_split=all_splits["train"],
-        feature_keys=feature_keys,
-        sequence_key=sequence_key,
-        gls_key=gls_key,
-        txt_key=txt_key,
-        phase="train",
+    # Load the base dataset from Hugging Face
+    all_splits: DatasetDict = load_dataset(
+        data_cfg["hf_dataset"], trust_remote_code=True
     )
     
-    dev_data = SignTranslationDataset(
-        hf_split=all_splits["validation"],
-        feature_keys=feature_keys,
-        sequence_key=sequence_key,
-        gls_key=gls_key,
-        txt_key=txt_key,
-        phase="dev",
+    # Load and process local CSV annotations
+    # This part will fail if the keys do not match (the original problem)
+    train_df = __load_and_filter_sents(
+        {"split": "train", "include_only": all_splits["train"]["name"], **data_cfg}
+    )
+    dev_df = __load_and_filter_sents(
+        {"split": "dev", "include_only": all_splits["dev"]["name"], **data_cfg}
+    )
+    test_df = __load_and_filter_sents(
+        {"split": "test", "include_only": all_splits["test"]["name"], **data_cfg}
     )
     
-    test_data = None
-    if "test" in all_splits:
-        test_data = SignTranslationDataset(
-            hf_split=all_splits["test"],
-            feature_keys=feature_keys,
-            sequence_key=sequence_key,
-            gls_key=gls_key,
-            txt_key=txt_key,
-            phase="test",
-        )
+    # Filter and map datasets
+    all_splits["train"] = all_splits["train"].filter(
+        lambda example: example['name'] in train_df.SENTENCE_NAME.values
+    ).map(lambda example: __filter_and_align_gls(example, train_df))
+    all_splits["dev"] = all_splits["dev"].filter(
+        lambda example: example['name'] in dev_df.SENTENCE_NAME.values
+    ).map(lambda example: __filter_and_align_gls(example, dev_df))
+    all_splits["test"] = all_splits["test"].filter(
+        lambda example: example['name'] in test_df.SENTENCE_NAME.values
+    ).map(lambda example: __filter_and_align_gls(example, test_df))
 
-    # 4. Build vocabularies from the training set
-    print("Building vocabularies...")
-    gls_vocab = build_vocab(data_cfg, dataset=train_data, vocab_type="gls")
-    txt_vocab = build_vocab(data_cfg, dataset=train_data, vocab_type="txt")
+    gls_key = data_cfg.get("gls_key", "gloss")
+    txt_key = data_cfg.get("txt_key", "text")
 
-    return train_data, dev_data, test_data, gls_vocab, txt_vocab
+    gls_vocab, txt_vocab = __tokenize_and_build_vocab(
+        data_cfg, all_splits, gls_key, txt_key
+    )
+
+    # Tokenize the datasets
+    all_splits = all_splits.map(
+        lambda ex: {
+            "gls_ids": gls_vocab.tokens_to_ids(ex[gls_key].split()),
+            "txt_ids": txt_vocab.tokens_to_ids(ex[txt_key].split()),
+        },
+        remove_columns=[gls_key, txt_key],
+    )
+
+    return (
+        all_splits["train"],
+        all_splits["dev"],
+        all_splits["test"],
+        gls_vocab,
+        txt_vocab,
+    )
 
 # ==============================================================================
 # build_vocab, Dataset, Sampler, and Collate classes (mostly unchanged)

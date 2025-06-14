@@ -1,0 +1,17 @@
+# ... existing code ...
+testing:
+  eval_metrics: ["bleu"]
+  sacrebleu_cfg:
+    lowercase: True
+    tokenize: "13a"
+
+data:
+  # The module to use for data loading. Can be "data" (original) or "data_nonmap" (new).
+  data_module: "data"
+  # The base Hugging Face dataset to use.
+  # This can be a dataset ID from the Hub or a path to a local dataset loading script.
+  hf_dataset: "Saintbook/how2sign_keypoints"
+
+  # Root directory for local CSV annotation files.
+  csv_root: "/home/work/asic-3/input_data/csv_data"
+# ... existing code ... 
