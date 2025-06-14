@@ -17,11 +17,8 @@ _CITATION = """@inproceedings{duarte2021how2sign,
 class How2SignKeypoints(datasets.GeneratorBasedBuilder):
     """How2Sign 2D Keypoints Dataset Loader"""
 
-    VERSION = datasets.Version("1.0.0")
-
-    BUILDER_CONFIGS = [
-        datasets.BuilderConfig(name="default", version=VERSION, description="Default How2Sign keypoints dataset."),
-    ]
+    # URL for the remote repository containing the keypoint archives
+    _BASE_URL = "https://huggingface.co/datasets/Saintbook/how2sign_keypoints/resolve/main"
 
     def _info(self):
         return datasets.DatasetInfo(
@@ -39,64 +36,71 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
         )
 
     def _split_generators(self, dl_manager):
-        # Assumes the user has downloaded the data manually and placed it in the cache.
-        # This avoids automatic download which might fail for large files.
-        # The user should place the files in ~/.cache/huggingface/datasets/downloads/
-        keypoints_archive_path = {
-            "train": "/home/work/asic-3/input_data/keypoints/train_2D_keypoints.tar.gz",
-            "validation": "/home/work/asic-3/input_data/keypoints/val_2D_keypoints.tar.gz",
-            "test": "/home/work/asic-3/input_data/keypoints/test_2D_keypoints.tar.gz",
+        # 1. Download and extract keypoint archives from the remote URL
+        keypoint_urls = {
+            "train": f"{self._BASE_URL}/train_2D_keypoints.tar.gz",
+            "validation": f"{self._BASE_URL}/val_2D_keypoints.tar.gz",
+            "test": f"{self._BASE_URL}/test_2D_keypoints.tar.gz",
+        }
+        keypoints_dirs = dl_manager.download_and_extract(keypoint_urls)
+
+        # 2. Define the paths to the LOCAL CSV files
+        # These paths should match the environment where the code is run
+        csv_root = "/home/work/asic-3/input_data/csv_data"
+        local_csv_paths = {
+            "train": os.path.join(csv_root, "how2sign_realigned_train.csv"),
+            "validation": os.path.join(csv_root, "how2sign_realigned_val.csv"),
+            "test": os.path.join(csv_root, "how2sign_realigned_test.csv"),
         }
         
-        csv_path = {
-            "train": "/home/work/asic-3/input_data/csv_data/how2sign_realigned_train.csv",
-            "validation": "/home/work/asic-3/input_data/csv_data/how2sign_realigned_val.csv",
-            "test": "/home/work/asic-3/input_data/csv_data/how2sign_realigned_test.csv",
-        }
+        # Verify that local CSV files exist
+        for split, path in local_csv_paths.items():
+            if not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"Local CSV file for '{split}' split not found at {path}. "
+                    "Please ensure the CSV files are in the correct directory."
+                )
 
         return [
             datasets.SplitGenerator(
                 name=datasets.Split.TRAIN,
                 gen_kwargs={
-                    "keypoints_archive": keypoints_archive_path["train"],
-                    "csv_file": csv_path["train"],
+                    "keypoints_dir": os.path.join(keypoints_dirs["train"], "openpose_output_fps_25/json"),
+                    "csv_file": local_csv_paths["train"],
                 },
             ),
             datasets.SplitGenerator(
                 name=datasets.Split.VALIDATION,
                 gen_kwargs={
-                    "keypoints_archive": keypoints_archive_path["validation"],
-                    "csv_file": csv_path["validation"],
+                    "keypoints_dir": os.path.join(keypoints_dirs["validation"], "openpose_output_fps_25/json"),
+                    "csv_file": local_csv_paths["validation"],
                 },
             ),
             datasets.SplitGenerator(
                 name=datasets.Split.TEST,
                 gen_kwargs={
-                    "keypoints_archive": keypoints_archive_path["test"],
-                    "csv_file": csv_path["test"],
+                    "keypoints_dir": os.path.join(keypoints_dirs["test"], "openpose_output_fps_25/json"),
+                    "csv_file": local_csv_paths["test"],
                 },
             ),
         ]
 
-    def _generate_examples(self, keypoints_archive, csv_file):
+    def _generate_examples(self, keypoints_dir, csv_file):
         df = pd.read_csv(csv_file, sep='\\t', engine='python')
         
-        with tarfile.open(keypoints_archive, "r:gz") as tar:
-            for member in tar.getmembers():
-                if member.isfile() and member.name.endswith('.npy'):
-                    sentence_name = os.path.basename(member.name).replace('.npy', '')
+        for f_name in os.listdir(keypoints_dir):
+            if f_name.endswith('.npy'):
+                sentence_name = f_name.replace('.npy', '')
+                
+                row = df[df['SENTENCE_NAME'] == sentence_name]
+                if not row.empty:
+                    text = row.iloc[0]['SENTENCE']
                     
-                    # Find corresponding row in dataframe
-                    row = df[df['SENTENCE_NAME'] == sentence_name]
-                    if not row.empty:
-                        text = row.iloc[0]['SENTENCE']
-                        
-                        # Extract and load .npy file
-                        f = tar.extractfile(member)
-                        keypoints_array = np.load(f)
-                        
-                        yield sentence_name, {
-                            "sentence_name": sentence_name,
-                            "keypoints": keypoints_array.tolist(),
-                            "text": text,
-                        } 
+                    keypoint_file_path = os.path.join(keypoints_dir, f_name)
+                    keypoints_array = np.load(keypoint_file_path)
+                    
+                    yield sentence_name, {
+                        "sentence_name": sentence_name,
+                        "keypoints": keypoints_array.tolist(),
+                        "text": text,
+                    } 
