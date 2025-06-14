@@ -99,6 +99,7 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
         logging.info(f"First 5 SENTENCE_NAME entries from CSV:\n{df['SENTENCE_NAME'].head().to_string()}")
 
         npy_filenames_found = []
+        all_filenames_found_for_debug = []
         matched_count = 0
 
         for path, file in dl_manager.iter_archive(keypoints_archive):
@@ -106,6 +107,9 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
                 nested_archive_content = io.BytesIO(file.read())
                 with tarfile.open(fileobj=nested_archive_content) as nested_tar:
                     for member in nested_tar.getmembers():
+                        if len(all_filenames_found_for_debug) < 10:
+                            all_filenames_found_for_debug.append(member.name)
+
                         if member.name.endswith('.npy'):
                             if len(npy_filenames_found) < 5:
                                 npy_filenames_found.append(os.path.basename(member.name))
@@ -130,4 +134,5 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
             logging.warning("--- DEBUGGING: NO MATCHES FOUND ---")
             logging.warning(f"Could not find any matches between .npy files and the CSV.")
             logging.warning(f"Example .npy filenames found in archive: {npy_filenames_found}")
-            logging.warning("Please compare the format of the .npy filenames above with the CSV names printed at the start.") 
+            logging.warning(f"Example of *ALL* file paths found in archive for debugging: {all_filenames_found_for_debug}")
+            logging.warning("Please inspect the file paths above to correct the loading logic.") 
