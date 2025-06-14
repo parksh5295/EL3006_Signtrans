@@ -95,36 +95,28 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
 
         logging.info(f"Reading CSV file from {csv_file}")
         df = pd.read_csv(csv_file, sep='\\t', engine='python')
-        logging.info("CSV reading complete. Starting to iterate main archive...")
-        
-        outer_file_count = 0
-        matched_count = 0
-        # Iterate through the outer tar.gz archive
-        for path, file in dl_manager.iter_archive(keypoints_archive):
-            outer_file_count += 1
-            if outer_file_count % 500 == 0:
-                logging.info(f"Scanned {outer_file_count} files in outer archive...")
+        csv_sentence_names = set(df['SENTENCE_NAME'])
+        logging.info(f"First 5 SENTENCE_NAME entries from CSV:\n{df['SENTENCE_NAME'].head().to_string()}")
 
-            # We are looking for nested tar.gz files
+        npy_filenames_found = []
+        matched_count = 0
+
+        for path, file in dl_manager.iter_archive(keypoints_archive):
             if path.endswith(".tar.gz"):
-                logging.info(f"Found nested archive: {path}. Reading its content...")
                 nested_archive_content = io.BytesIO(file.read())
-                
-                # Iterate through the inner (nested) tar.gz archive
                 with tarfile.open(fileobj=nested_archive_content) as nested_tar:
                     for member in nested_tar.getmembers():
                         if member.name.endswith('.npy'):
+                            if len(npy_filenames_found) < 5:
+                                npy_filenames_found.append(os.path.basename(member.name))
+
                             sentence_name = os.path.basename(member.name).replace('.npy', '')
                             
-                            row = df[df['SENTENCE_NAME'] == sentence_name]
-                            if not row.empty:
+                            if sentence_name in csv_sentence_names:
                                 matched_count += 1
-                                if matched_count % 100 == 0:
-                                    logging.info(f"Found {matched_count} matching examples so far...")
+                                row = df[df['SENTENCE_NAME'] == sentence_name].iloc[0]
+                                text = row['SENTENCE']
                                 
-                                text = row.iloc[0]['SENTENCE']
-                                
-                                # Extract and load the .npy file content
                                 npy_file = nested_tar.extractfile(member)
                                 keypoints_array = np.load(io.BytesIO(npy_file.read()))
                                 
@@ -133,4 +125,9 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
                                     "keypoints": keypoints_array.tolist(),
                                     "text": text,
                                 }
-        logging.warning(f"--- Finished archive iteration. Total outer files: {outer_file_count}, Total matched examples: {matched_count} ---") 
+
+        if matched_count == 0:
+            logging.warning("--- DEBUGGING: NO MATCHES FOUND ---")
+            logging.warning(f"Could not find any matches between .npy files and the CSV.")
+            logging.warning(f"Example .npy filenames found in archive: {npy_filenames_found}")
+            logging.warning("Please compare the format of the .npy filenames above with the CSV names printed at the start.") 
