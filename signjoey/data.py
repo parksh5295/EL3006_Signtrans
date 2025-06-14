@@ -278,13 +278,13 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
     # 2. Load the text annotations from local CSV files
     csv_root = os.path.expanduser(data_cfg["csv_root"])
     print(f"Loading text annotations from local CSV files in: {csv_root}")
-    
+
     def load_annotations(split_name):
         csv_path = os.path.join(csv_root, f"how2sign_realigned_{split_name}.csv")
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"Annotation file not found: {csv_path}")
-        # Use SENTENCE_NAME as index for easy merging
-        return pd.read_csv(csv_path, sep='\\t', engine='python').set_index("SENTENCE_NAME")
+        # Use VIDEO_NAME as index for easy merging
+        return pd.read_csv(csv_path, sep='\\t', engine='python').set_index("VIDEO_NAME")
 
     train_ann = load_annotations("train")
     val_ann = load_annotations("val")
@@ -292,29 +292,33 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
 
     # 3. Merge text annotations into the keypoint datasets
     print("Merging text data into keypoint dataset...")
-    
+
     def merge_datasets(keypoint_split, annotation_df):
         """
-        Merge keypoint dataset with annotation dataframe.
-        
-        Args:
-            keypoint_split: Hugging Face dataset split
-            annotation_df: Pandas DataFrame with annotations
-            
-        Returns:
-            Merged dataset
+        Merge keypoint dataset with annotation dataframe by extracting
+        the video name from the keypoint file path (__key__).
         """
-        # Debug prints
-        print("\n=== Debug: Dataset Structure ===")
-        print("Hugging Face Dataset columns:", keypoint_split.column_names)
-        print("First few keys in HF dataset:", [keypoint_split[i]['__key__'] for i in range(min(3, len(keypoint_split)))])
-        print("\nAnnotation DataFrame columns:", annotation_df.columns.tolist())
-        print("First few SENTENCE_NAMEs in annotation:", annotation_df['SENTENCE_NAME'].head(3).tolist())
-        print("================================\n")
         
-        # Original merge logic
-        sentences = [annotation_df.loc[s_name].get("SENTENCE", "") for s_name in keypoint_split['__key__']]
-        return keypoint_split.add_column("sentence", sentences)
+        def get_video_name_from_key(key: str) -> str:
+            # Extracts 'anxhVQxvPGs_21-5-rgb_front' from a path like
+            # 'openpose_output/json/anxhVQxvPGs_21-5-rgb_front/...'
+            return os.path.dirname(key).split('/')[-1]
+
+        # Map each keypoint entry to its corresponding sentence
+        sentences = []
+        for item in keypoint_split:
+            key = item['__key__']
+            video_name = get_video_name_from_key(key)
+            try:
+                # Find the sentence using the extracted video_name
+                sentence = annotation_df.loc[video_name, "SENTENCE"]
+            except KeyError:
+                # Handle cases where a video_name might not be in the annotations
+                print(f"Warning: VIDEO_NAME '{video_name}' from key '{key}' not found in annotations. Using empty string.")
+                sentence = ""
+            sentences.append(sentence)
+            
+        return keypoint_split.add_column("SENTENCE", sentences)
 
     keypoints_ds["train"] = merge_datasets(keypoints_ds["train"], train_ann)
     keypoints_ds["validation"] = merge_datasets(keypoints_ds["validation"], val_ann)
