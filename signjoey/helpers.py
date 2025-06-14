@@ -41,22 +41,24 @@ def make_model_dir(model_dir: str, overwrite: bool = False, rank: int = 0) -> st
     return model_dir
 
 
-def make_logger(model_dir: str, log_file: str = "train.log") -> Logger:
+def make_logger(model_dir: str, log_file: str = "train.log", rank: int = 0) -> Logger:
     """
     Create a logger for logging the training process.
 
     :param model_dir: path to logging directory
     :param log_file: path to logging file
+    :param rank: process rank for distributed training
     :return: logger object
     """
     logger = logging.getLogger(__name__)
     if not logger.handlers:
         logger.setLevel(level=logging.DEBUG)
-        fh = logging.FileHandler("{}/{}".format(model_dir, log_file))
-        fh.setLevel(level=logging.DEBUG)
-        logger.addHandler(fh)
-        formatter = logging.Formatter("%(asctime)s %(message)s")
-        fh.setFormatter(formatter)
+        if rank == 0:  # Only create file handler on main process
+            fh = logging.FileHandler("{}/{}".format(model_dir, log_file))
+            fh.setLevel(level=logging.DEBUG)
+            logger.addHandler(fh)
+            formatter = logging.Formatter("%(asctime)s %(message)s")
+            fh.setFormatter(formatter)
         if platform == "linux":
             sh = logging.StreamHandler()
             sh.setLevel(logging.INFO)
