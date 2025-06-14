@@ -44,7 +44,7 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
             "validation": f"{self._BASE_URL}/val_2D_keypoints.tar.gz",
             "test": f"{self._BASE_URL}/test_2D_keypoints.tar.gz",
         }
-        downloaded_archives = dl_manager.download(keypoint_urls)
+        keypoints_dirs = dl_manager.download_and_extract(keypoint_urls)
 
         # 2. Define the paths to the LOCAL CSV files
         # These paths should match the environment where the code is run
@@ -64,75 +64,65 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
                 )
 
         return [
+            # --- DEBUG: Use smaller validation set as train set to speed up debugging ---
             datasets.SplitGenerator(
                 name=datasets.Split.TRAIN,
                 gen_kwargs={
-                    "keypoints_archive": downloaded_archives["train"],
-                    "csv_file": local_csv_paths["train"],
-                    "dl_manager": dl_manager,
+                    "keypoints_dir": keypoints_dirs["validation"], # Use validation data
+                    "csv_file": local_csv_paths["validation"],   # Use validation data
                 },
             ),
             datasets.SplitGenerator(
                 name=datasets.Split.VALIDATION,
                 gen_kwargs={
-                    "keypoints_archive": downloaded_archives["validation"],
+                    "keypoints_dir": keypoints_dirs["validation"],
                     "csv_file": local_csv_paths["validation"],
-                    "dl_manager": dl_manager,
                 },
             ),
-            datasets.SplitGenerator(
-                name=datasets.Split.TEST,
-                gen_kwargs={
-                    "keypoints_archive": downloaded_archives["test"],
-                    "csv_file": local_csv_paths["test"],
-                    "dl_manager": dl_manager,
-                },
-            ),
+            # datasets.SplitGenerator(
+            #     name=datasets.Split.TEST,
+            #     gen_kwargs={
+            #         "keypoints_dir": keypoints_dirs["test"],
+            #         "csv_file": local_csv_paths["test"],
+            #     },
+            # ),
         ]
 
-    def _generate_examples(self, keypoints_archive, csv_file, dl_manager):
+    def _generate_examples(self, keypoints_dir, csv_file):
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        
+        # --- DEBUG: List the contents of the extracted directory ---
+        found_files_for_debug = []
+        try:
+            logging.info(f"--- Walking through directory: {keypoints_dir} ---")
+            for root, dirs, files in os.walk(keypoints_dir):
+                for name in files:
+                    if len(found_files_for_debug) < 20:
+                        found_files_for_debug.append(os.path.join(root, name))
+                for name in dirs:
+                    if len(found_files_for_debug) < 20:
+                        found_files_for_debug.append(os.path.join(root, name))
+            logging.info(f"--- DEBUG: First 20 files/dirs found: {found_files_for_debug} ---")
+        except Exception as e:
+            logging.error(f"--- DEBUG: Error while walking directory: {e} ---")
 
-        logging.info(f"Reading CSV file from {csv_file}")
+
         df = pd.read_csv(csv_file, sep='\\t', engine='python')
         csv_sentence_names = set(df['SENTENCE_NAME'])
-        logging.info(f"First 5 SENTENCE_NAME entries from CSV:\n{df['SENTENCE_NAME'].head().to_string()}")
-
-        npy_filenames_found = []
-        all_filenames_found_for_debug = []
-        matched_count = 0
-
-        for path, file in dl_manager.iter_archive(keypoints_archive):
-            if path.endswith(".tar.gz"):
-                nested_archive_content = io.BytesIO(file.read())
-                with tarfile.open(fileobj=nested_archive_content) as nested_tar:
-                    for member in nested_tar.getmembers():
-                        if len(all_filenames_found_for_debug) < 10:
-                            all_filenames_found_for_debug.append(member.name)
-
-                        if member.name.endswith('.npy'):
-                            if len(npy_filenames_found) < 5:
-                                npy_filenames_found.append(os.path.basename(member.name))
-
-                            sentence_name = os.path.basename(member.name).replace('.npy', '')
-                            
-                            if sentence_name in csv_sentence_names:
-                                matched_count += 1
-                                row = df[df['SENTENCE_NAME'] == sentence_name].iloc[0]
-                                text = row['SENTENCE']
-                                
-                                npy_file = nested_tar.extractfile(member)
-                                keypoints_array = np.load(io.BytesIO(npy_file.read()))
-                                
-                                yield sentence_name, {
-                                    "sentence_name": sentence_name,
-                                    "keypoints": keypoints_array.tolist(),
-                                    "text": text,
-                                }
-
-        if matched_count == 0:
-            logging.warning("--- DEBUGGING: NO MATCHES FOUND ---")
-            logging.warning(f"Could not find any matches between .npy files and the CSV.")
-            logging.warning(f"Example .npy filenames found in archive: {npy_filenames_found}")
-            logging.warning(f"Example of *ALL* file paths found in archive for debugging: {all_filenames_found_for_debug}")
-            logging.warning("Please inspect the file paths above to correct the loading logic.") 
+        
+        for root, _, files in os.walk(keypoints_dir):
+            for f_name in files:
+                if f_name.endswith('.npy'):
+                    sentence_name = os.path.basename(f_name).replace('.npy', '')
+                    if sentence_name in csv_sentence_names:
+                        row = df[df['SENTENCE_NAME'] == sentence_name].iloc[0]
+                        text = row['SENTENCE']
+                        
+                        keypoint_file_path = os.path.join(root, f_name)
+                        keypoints_array = np.load(keypoint_file_path)
+                        
+                        yield sentence_name, {
+                            "sentence_name": sentence_name,
+                            "keypoints": keypoints_array.tolist(),
+                            "text": text,
+                        } 
