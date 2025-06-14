@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import os
 import logging
+import io
 
 _DESCRIPTION = "How2Sign 2D Keypoints dataset"
 _HOMEPAGE = "https://github.com/how2sign/how2sign"
@@ -66,69 +67,55 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
             datasets.SplitGenerator(
                 name=datasets.Split.TRAIN,
                 gen_kwargs={
-                    "keypoints_dir": keypoints_dirs["train"],
+                    "keypoints_archive": keypoints_dirs["train"],
                     "csv_file": local_csv_paths["train"],
+                    "dl_manager": dl_manager,
                 },
             ),
             datasets.SplitGenerator(
                 name=datasets.Split.VALIDATION,
                 gen_kwargs={
-                    "keypoints_dir": keypoints_dirs["validation"],
+                    "keypoints_archive": keypoints_dirs["validation"],
                     "csv_file": local_csv_paths["validation"],
+                    "dl_manager": dl_manager,
                 },
             ),
             datasets.SplitGenerator(
                 name=datasets.Split.TEST,
                 gen_kwargs={
-                    "keypoints_dir": keypoints_dirs["test"],
+                    "keypoints_archive": keypoints_dirs["test"],
                     "csv_file": local_csv_paths["test"],
+                    "dl_manager": dl_manager,
                 },
             ),
         ]
 
-    def _generate_examples(self, keypoints_dir, csv_file):
-        logging.basicConfig(level=logging.INFO)
-        logging.info(f"--- Starting data generation for split ---")
-        logging.info(f"Attempting to read keypoints from: {keypoints_dir}")
-        logging.info(f"Attempting to read annotations from: {csv_file}")
+    def _generate_examples(self, keypoints_archive, csv_file, dl_manager):
+        df = pd.read_csv(csv_file, sep='\\t', engine='python')
         
-        try:
-            df = pd.read_csv(csv_file, sep='\\t', engine='python')
-            logging.info(f"Successfully loaded CSV. Columns: {df.columns.tolist()}")
-            logging.info(f"First 5 SENTENCE_NAME entries from CSV:\n{df['SENTENCE_NAME'].head().to_string()}")
-        except Exception as e:
-            logging.error(f"Failed to load or process CSV file: {e}")
-            return
-
-        found_npy_files_count = 0
-        matched_files_count = 0
-        npy_file_examples = []
-        
-        for root, _, files in os.walk(keypoints_dir):
-            for f_name in files:
-                if f_name.endswith('.npy'):
-                    found_npy_files_count += 1
-                    if len(npy_file_examples) < 5:
-                        npy_file_examples.append(f_name)
-
-                    sentence_name = f_name.replace('.npy', '')
-                    
-                    row = df[df['SENTENCE_NAME'] == sentence_name]
-                    if not row.empty:
-                        matched_files_count += 1
-                        text = row.iloc[0]['SENTENCE']
-                        
-                        keypoint_file_path = os.path.join(root, f_name)
-                        keypoints_array = np.load(keypoint_file_path)
-                        
-                        yield sentence_name, {
-                            "sentence_name": sentence_name,
-                            "keypoints": keypoints_array.tolist(),
-                            "text": text,
-                        }
-        
-        logging.warning(f"--- Generation summary ---")
-        logging.warning(f"Total .npy files found: {found_npy_files_count}")
-        logging.warning(f"Total files matched with CSV: {matched_files_count}")
-        if found_npy_files_count > 0:
-            logging.warning(f"First 5 .npy filenames found: {npy_file_examples}") 
+        # Iterate through the outer tar.gz archive
+        for path, file in dl_manager.iter_archive(keypoints_archive):
+            # We are looking for nested tar.gz files
+            if path.endswith(".tar.gz"):
+                # Stream the content of the nested tar.gz file
+                nested_archive_content = io.BytesIO(file.read())
+                
+                # Iterate through the inner (nested) tar.gz archive
+                with tarfile.open(fileobj=nested_archive_content) as nested_tar:
+                    for member in nested_tar.getmembers():
+                        if member.name.endswith('.npy'):
+                            sentence_name = os.path.basename(member.name).replace('.npy', '')
+                            
+                            row = df[df['SENTENCE_NAME'] == sentence_name]
+                            if not row.empty:
+                                text = row.iloc[0]['SENTENCE']
+                                
+                                # Extract and load the .npy file content
+                                npy_file = nested_tar.extractfile(member)
+                                keypoints_array = np.load(io.BytesIO(npy_file.read()))
+                                
+                                yield sentence_name, {
+                                    "sentence_name": sentence_name,
+                                    "keypoints": keypoints_array.tolist(),
+                                    "text": text,
+                                } 
