@@ -103,14 +103,15 @@ def load_annotations(csv_root: str, split_name: str) -> pd.DataFrame:
 
 def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, TextVocabulary):
     """
-    Load keypoint data from Hugging Face datasets and merge it with
-    text annotations from local CSV files.
+    Load data using the custom Hugging Face dataset loading script.
+    The script handles downloading, extracting, and merging the data.
     """
-    # 1. Load the keypoint dataset from Hugging Face Hub
+    # 1. Load the dataset using the local loading script
     hf_dataset_id = data_cfg["hf_dataset"]
-    print(f"Loading keypoint data from Hugging Face dataset: {hf_dataset_id}")
-    keypoints_ds: DatasetDict = load_dataset(hf_dataset_id)
+    print(f"Loading dataset using local script: {hf_dataset_id}")
+    all_splits: DatasetDict = load_dataset(hf_dataset_id)
 
+    '''
     # 2. Load the text annotations from local CSV files
     csv_root = os.path.expanduser(data_cfg["csv_root"])
     print(f"Loading text annotations from local CSV files in: {csv_root}")
@@ -127,14 +128,17 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
         keypoints_ds["test"] = merge_datasets(keypoints_ds["test"], test_ann)
 
     # 4. Create SignTranslationDataset objects for each split
+    '''
+
+    # 2. Get config values
     feature_keys = data_cfg["feature_keys"]
     sequence_key = data_cfg["sequence_key"]
-    # The 'gls' and 'txt' keys now refer to the 'SENTENCE' column we just added
-    gls_key = "SENTENCE"
-    txt_key = "SENTENCE"
+    gls_key = data_cfg["gls_key"]
+    txt_key = data_cfg["txt_key"]
 
+    # 3. Create SignTranslationDataset objects for each split
     train_data = SignTranslationDataset(
-        hf_split=keypoints_ds["train"],
+        hf_split=all_splits["train"],
         feature_keys=feature_keys,
         sequence_key=sequence_key,
         gls_key=gls_key,
@@ -143,7 +147,7 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
     )
     
     dev_data = SignTranslationDataset(
-        hf_split=keypoints_ds["validation"],
+        hf_split=all_splits["validation"],
         feature_keys=feature_keys,
         sequence_key=sequence_key,
         gls_key=gls_key,
@@ -152,9 +156,9 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
     )
     
     test_data = None
-    if "test" in keypoints_ds:
+    if "test" in all_splits:
         test_data = SignTranslationDataset(
-            hf_split=keypoints_ds["test"],
+            hf_split=all_splits["test"],
             feature_keys=feature_keys,
             sequence_key=sequence_key,
             gls_key=gls_key,
@@ -162,7 +166,7 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
             phase="test",
         )
 
-    # 5. Build vocabularies from the training set
+    # 4. Build vocabularies from the training set
     print("Building vocabularies...")
     gls_vocab = build_vocab(data_cfg, dataset=train_data, vocab_type="gls")
     txt_vocab = build_vocab(data_cfg, dataset=train_data, vocab_type="txt")
