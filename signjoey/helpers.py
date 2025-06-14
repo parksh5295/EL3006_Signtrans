@@ -53,19 +53,24 @@ def make_logger(model_dir: str, log_file: str = "train.log", rank: int = 0) -> L
     logger = logging.getLogger(__name__)
     if not logger.handlers:
         logger.setLevel(level=logging.DEBUG)
+        formatter = logging.Formatter("%(asctime)s %(message)s")
+        
         if rank == 0:  # Only create file handler on main process
-            fh = logging.FileHandler("{}/{}".format(model_dir, log_file))
+            fh = logging.FileHandler(f"{model_dir}/{log_file}")
             fh.setLevel(level=logging.DEBUG)
-            logger.addHandler(fh)
-            formatter = logging.Formatter("%(asctime)s %(message)s")
             fh.setFormatter(formatter)
+            logger.addHandler(fh)
+
         if platform == "linux":
             sh = logging.StreamHandler()
             sh.setLevel(logging.INFO)
             sh.setFormatter(formatter)
             logging.getLogger("").addHandler(sh)
-        logger.info("Hello! This is Joey-NMT.")
-        return logger
+            
+        if rank == 0:
+            logger.info("Hello! This is Joey-NMT.")
+            
+    return logger
 
 
 def log_cfg(cfg: dict, logger: Logger, prefix: str = "cfg"):
