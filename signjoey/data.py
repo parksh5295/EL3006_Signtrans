@@ -2,14 +2,16 @@
 """
 Data module
 """
-import pickle
+# import pickle
+import os
+import pandas as pd
 import torch
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
-from torch.utils.data.sampler import Sampler
+from torch.utils.data import Dataset, DataLoader, Sampler
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.utils.rnn import pad_sequence
 from typing import List, Dict, Tuple
+from datasets import load_dataset, DatasetDict
 from signjoey.vocabulary import (
     Vocabulary,
     GlossVocabulary,
@@ -20,9 +22,170 @@ from signjoey.vocabulary import (
     EOS_TOKEN,
 )
 from signjoey.batch import Batch
-import pandas as pd
-from datasets import load_dataset, DatasetDict
-import os
+
+# ==============================================================================
+# Helper functions for data loading and merging
+# ==============================================================================
+
+def get_lookup_dict(annotation_df: pd.DataFrame) -> Dict[str, str]:
+    """Creates a dictionary to look up sentences by a normalized video name."""
+    lookup = {}
+    for _, row in annotation_df.iterrows():
+        video_name = row.get('VIDEO_NAME')
+        if video_name and isinstance(video_name, str):
+            # Normalize the key from the CSV, e.g., '--7E2sU6zP4-5-rgb_front' -> '--7E2sU6zP4-5'
+            normalized_key = video_name.split('-rgb_front')[0]
+            lookup[normalized_key] = row['SENTENCE']
+    return lookup
+
+def merge_datasets(keypoint_split: Dataset, annotation_df: pd.DataFrame) -> Dataset:
+    """
+    Merge keypoint dataset with annotation dataframe using a robust
+    normalized key matching strategy.
+    """
+    sentence_lookup = get_lookup_dict(annotation_df)
+    
+    def get_normalized_key_from_hf(hf_key: str) -> str:
+        # Extracts and normalizes the key from Hugging Face __key__
+        # e.g., '.../--7E2sU6zP4_5-rgb_front/...' -> '--7E2sU6zP4-5'
+        dir_name = os.path.dirname(hf_key).split('/')[-1]
+        if len(dir_name) > 11 and dir_name[11] == '_':
+            part1 = dir_name[:11]
+            part2 = dir_name[12:].split('-rgb_front')[0]
+            return f"{part1}-{part2}"
+        # Fallback for keys that don't match the expected pattern
+        return dir_name.split('-rgb_front')[0]
+
+    sentences = []
+    unmatched_count = 0
+    for item in keypoint_split:
+        hf_key = item['__key__']
+        normalized_key = get_normalized_key_from_hf(hf_key)
+        
+        sentence = sentence_lookup.get(normalized_key)
+        if sentence is None:
+            unmatched_count += 1
+            sentence = ""  # Use empty string for unmatched entries
+        
+        sentences.append(sentence)
+        
+    if unmatched_count > 0:
+        print(
+            f"Warning: {unmatched_count} out of {len(keypoint_split)} entries "
+            f"could not be matched with annotations and were assigned an empty sentence."
+        )
+        
+    return keypoint_split.add_column("SENTENCE", sentences)
+
+def load_annotations(csv_root: str, split_name: str) -> pd.DataFrame:
+    """Loads a CSV annotation file into a pandas DataFrame."""
+    csv_path = os.path.join(csv_root, f"how2sign_realigned_{split_name}.csv")
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Annotation file not found: {csv_path}")
+    return pd.read_csv(csv_path, sep='\\t', engine='python')
+
+# ==============================================================================
+# Main data loading function
+# ==============================================================================
+
+def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, TextVocabulary):
+    """
+    Load keypoint data from Hugging Face datasets and merge it with
+    text annotations from local CSV files.
+    """
+    # 1. Load the keypoint dataset from Hugging Face Hub
+    hf_dataset_id = data_cfg["hf_dataset"]
+    print(f"Loading keypoint data from Hugging Face dataset: {hf_dataset_id}")
+    keypoints_ds: DatasetDict = load_dataset(hf_dataset_id)
+
+    # 2. Load the text annotations from local CSV files
+    csv_root = os.path.expanduser(data_cfg["csv_root"])
+    print(f"Loading text annotations from local CSV files in: {csv_root}")
+    
+    train_ann = load_annotations(csv_root, "train")
+    val_ann = load_annotations(csv_root, "val")
+    test_ann = load_annotations(csv_root, "test")
+
+    # 3. Merge text annotations into the keypoint datasets
+    print("Merging text data into keypoint dataset...")
+    keypoints_ds["train"] = merge_datasets(keypoints_ds["train"], train_ann)
+    keypoints_ds["validation"] = merge_datasets(keypoints_ds["validation"], val_ann)
+    if "test" in keypoints_ds:
+        keypoints_ds["test"] = merge_datasets(keypoints_ds["test"], test_ann)
+
+    # 4. Create SignTranslationDataset objects for each split
+    feature_keys = data_cfg["feature_keys"]
+    sequence_key = data_cfg["sequence_key"]
+    # The 'gls' and 'txt' keys now refer to the 'SENTENCE' column we just added
+    gls_key = "SENTENCE"
+    txt_key = "SENTENCE"
+
+    train_data = SignTranslationDataset(
+        hf_split=keypoints_ds["train"],
+        feature_keys=feature_keys,
+        sequence_key=sequence_key,
+        gls_key=gls_key,
+        txt_key=txt_key,
+        phase="train",
+    )
+    
+    dev_data = SignTranslationDataset(
+        hf_split=keypoints_ds["validation"],
+        feature_keys=feature_keys,
+        sequence_key=sequence_key,
+        gls_key=gls_key,
+        txt_key=txt_key,
+        phase="dev",
+    )
+    
+    test_data = None
+    if "test" in keypoints_ds:
+        test_data = SignTranslationDataset(
+            hf_split=keypoints_ds["test"],
+            feature_keys=feature_keys,
+            sequence_key=sequence_key,
+            gls_key=gls_key,
+            txt_key=txt_key,
+            phase="test",
+        )
+
+    # 5. Build vocabularies from the training set
+    print("Building vocabularies...")
+    gls_vocab = build_vocab(data_cfg, dataset=train_data, vocab_type="gls")
+    txt_vocab = build_vocab(data_cfg, dataset=train_data, vocab_type="txt")
+
+    return train_data, dev_data, test_data, gls_vocab, txt_vocab
+
+# ==============================================================================
+# build_vocab, Dataset, Sampler, and Collate classes (mostly unchanged)
+# ==============================================================================
+
+def build_vocab(cfg, dataset, vocab_type="gls"):
+    """
+    Builds a vocabulary from the dataset.
+    Assumes `dataset` has `gls` and `txt` attributes.
+    """
+    level = cfg["level"]
+    max_size = cfg.get(f"{vocab_type}_max_size", -1)
+    min_freq = cfg.get(f"{vocab_type}_min_freq", 1)
+    
+    vocab_file = cfg.get(f"{vocab_type}_vocab", None)
+    
+    if vocab_file is None:
+        # Build from scratch
+        if vocab_type == "gls":
+            sentences = [d["gls"] for d in dataset]
+            return GlossVocabulary(sentences, max_size=max_size, min_freq=min_freq)
+        else: # txt
+            sentences = [d["txt"] for d in dataset]
+            return TextVocabulary(sentences, max_size=max_size, min_freq=min_freq, level=level)
+    else:
+        # Load from file
+        if vocab_type == "gls":
+            return GlossVocabulary(file_path=vocab_file)
+        else:
+            return TextVocabulary(file_path=vocab_file, level=level)
+
 
 class SignTranslationDataset(Dataset):
     """
@@ -30,7 +193,6 @@ class SignTranslationDataset(Dataset):
     Assumes the dataset has columns for sequence_key, gls_key, txt_key,
     and feature columns as specified in feature_keys.
     """
-
     def __init__(
         self,
         hf_split: Dataset,
@@ -77,12 +239,8 @@ class SignTranslationDataset(Dataset):
 
 
 class TokenBatchSampler(Sampler):
-    """
-    A batch sampler that batches examples by token count.
-    Note: This might not be perfectly optimal for multi-stream inputs
-    as it only considers the length of the gloss or text.
-    """
-    def __init__(self, dataset, batch_size, type="gls", shuffle=False):
+    """A batch sampler that batches examples by token count."""
+    def __init__(self, dataset, batch_size, type="gls", shuffle=False, level="word"):
         self.dataset = dataset
         self.batch_size = batch_size
         self.type = type
@@ -93,45 +251,26 @@ class TokenBatchSampler(Sampler):
             # self.lengths = [len(s[dataset.gls_key].split()) for s in self.dataset.data]
             self.lengths = [len(s[dataset.gls_key].split()) for s in self.dataset.hf_split]
         else:  # txt
-            if self.dataset.level == "word":
+            if level == "word":
                 self.lengths = [len(s[dataset.txt_key].split()) for s in self.dataset.hf_split]
             else:
                 self.lengths = [len(s[dataset.txt_key]) for s in self.dataset.hf_split]
 
     def __iter__(self):
         indices = list(range(len(self.dataset)))
-        
-        if self.shuffle:
-            np.random.shuffle(indices)
-
-        # Sort by length to minimize padding
+        if self.shuffle: np.random.shuffle(indices)
         indices.sort(key=lambda i: self.lengths[i])
         
-        batches = []
-        current_batch = []
-        current_token_count = 0
-        
+        batches, current_batch = [], []
         for i in indices:
-            token_len = self.lengths[i]
-            if not current_batch:
+            if not current_batch or (len(current_batch) + 1) * self.lengths[i] > self.batch_size:
+                if current_batch: batches.append(current_batch)
                 current_batch = [i]
-                current_token_count = token_len
-            elif (len(current_batch) + 1) * token_len > self.batch_size:
-                batches.append(current_batch)
-                current_batch = [i]
-                current_token_count = token_len
             else:
                 current_batch.append(i)
-                current_token_count += token_len
-        
-        if current_batch:
-            batches.append(current_batch)
-        
-        if self.shuffle:
-            np.random.shuffle(batches)
-            
-        for batch in batches:
-            yield batch
+        if current_batch: batches.append(current_batch)
+        if self.shuffle: np.random.shuffle(batches)
+        for batch in batches: yield batch
     
     def __len__(self):
         # Provides an estimate of the number of batches
@@ -139,17 +278,13 @@ class TokenBatchSampler(Sampler):
 
 
 class PadCollate:
-    """
-    PadCollate for multiple feature streams.
-    Takes a list of samples and collates them into a batch,
-    padding each feature stream independently.
-    """
+    """Pads collated samples."""
     def __init__(
         self,
         gls_vocab: GlossVocabulary,
         txt_vocab: TextVocabulary,
-        level: str,
         txt_pad_index: int,
+        level: str,
     ):
         self.gls_vocab = gls_vocab
         self.txt_vocab = txt_vocab
@@ -158,27 +293,21 @@ class PadCollate:
         self.txt_pad_index = txt_pad_index
 
     def __call__(self, batch: List[Dict]) -> Batch:
-        # Get lists of all data components
+        if not batch: return Batch(is_train=False)
+        
         sequences = [b["sequence"] for b in batch]
         gls_list = [b["gls"] for b in batch]
         txt_list = [b["txt"] for b in batch]
         
-        # Group features by key from the list of sample dictionaries
-        if not batch:
-            return Batch(is_train=False)
-
         feature_keys = sorted(batch[0]["features"].keys())
         features_by_key = {key: [b["features"][key] for b in batch] for key in feature_keys}
 
-        # Pad each feature stream separately and collect their original lengths
-        padded_features = []
-        feature_lengths = [] # To store lengths of each feature stream
+        padded_features, feature_lengths = [], []
         for key in feature_keys:
             stream = features_by_key[key]
             lengths = torch.tensor([s.shape[0] for s in stream])
             feature_lengths.append(lengths)
-            padded_stream = pad_sequence(stream, batch_first=True, padding_value=0.0)
-            padded_features.append(padded_stream)
+            padded_features.append(pad_sequence(stream, batch_first=True, padding_value=0.0))
 
         # Pad gloss and text
         gls, gls_lengths = self.gls_vocab.sentences_to_ids(gls_list, bpe=False)
@@ -198,11 +327,11 @@ class PadCollate:
         # Create a new Batch object
         return Batch(
             is_train=True,
-            sgn=None,  # `sgn` is deprecated, use `features`
+            sgn=None,
             features=padded_features,
-            feature_lengths=feature_lengths, # Pass lengths to the batch
+            feature_lengths=feature_lengths,
             sgn_mask=None,
-            sgn_lengths=None, # `sgn_lengths` is deprecated
+            sgn_lengths=None,
             gls=gls,
             gls_lengths=gls_lengths,
             txt=txt,
@@ -218,7 +347,6 @@ def make_data_iter(
     batch_size: int,
     gls_vocab: GlossVocabulary,
     txt_vocab: TextVocabulary,
-    level: str,
     batch_type: str = "sentence",
     # train: bool = False,
     shuffle: bool = False,
@@ -226,167 +354,31 @@ def make_data_iter(
     use_ddp: bool = False,
     rank: int = 0,
     world_size: int = 1,
-) -> Tuple[DataLoader, DistributedSampler]:
-    """
-    Returns a data loader for a given dataset.
-    :return:
-        - data_loader: torch.utils.data.DataLoader object
-        - sampler: torch.utils.data.distributed.DistributedSampler object
-    """
+    level: str = "word",
+) -> Tuple[DataLoader, Sampler]:
+    """Returns a data loader for a given dataset."""
+    sampler = None
     if batch_type == "token":
-        # This is not yet supported with DDP
-        # ...
-        pass
-    else:  # sentence-based batching
-        sampler = None
-        if use_ddp:
-            sampler = DistributedSampler(
-                dataset, num_replicas=world_size, rank=rank, shuffle=shuffle
-            )
-        
-        # When using a sampler, shuffle must be False for the DataLoader
-        dataloader_shuffle = shuffle and sampler is None
-
-        data_loader = DataLoader(
-            dataset=dataset,
-            batch_size=batch_size,
-            shuffle=dataloader_shuffle,
-            sampler=sampler,
-            drop_last=False,
-            collate_fn=PadCollate(
-                gls_vocab=gls_vocab,
-                txt_vocab=txt_vocab,
-                level=level,
-                txt_pad_index=txt_vocab.stoi[PAD_TOKEN],
-            ),
-            num_workers=num_workers,
-        )
-    return data_loader, sampler
-
-
-def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, TextVocabulary):
-    """
-    Load keypoint data from Hugging Face datasets and merge it with
-    text annotations from local CSV files.
-    """
-    # 1. Load the keypoint dataset from Hugging Face Hub
-    hf_dataset_id = data_cfg["hf_dataset"]
-    # all_splits: DatasetDict = load_dataset(hf_dataset_id)
-    print(f"Loading keypoint data from Hugging Face dataset: {hf_dataset_id}")
-    keypoints_ds: DatasetDict = load_dataset(hf_dataset_id)
-
-    # 2. Load the text annotations from local CSV files
-    csv_root = os.path.expanduser(data_cfg["csv_root"])
-    print(f"Loading text annotations from local CSV files in: {csv_root}")
-
-    def load_annotations(split_name):
-        csv_path = os.path.join(csv_root, f"how2sign_realigned_{split_name}.csv")
-        if not os.path.exists(csv_path):
-            raise FileNotFoundError(f"Annotation file not found: {csv_path}")
-        
-        # Read the dataframe
-        df = pd.read_csv(csv_path, sep='\\t', engine='python')
-        
-        # --- NEW DEBUG ---
-        print(f"\n=== Debug: Raw CSV Columns for {split_name} ===")
-        print(df.columns.tolist())
-        print(f"--- First 3 rows of {split_name} CSV ---")
-        print(df.head(3))
-        print("=========================================\n")
-        # --- END DEBUG ---
-
-        # Use VIDEO_NAME as index for easy merging
-        # return pd.read_csv(csv_path, sep='\\t', engine='python').set_index("VIDEO_NAME")
-        return df.set_index("VIDEO_NAME")
-
-    train_ann = load_annotations("train")
-    val_ann = load_annotations("val")
-    test_ann = load_annotations("test")
-
-    # 3. Merge text annotations into the keypoint datasets
-    print("Merging text data into keypoint dataset...")
-
-    def merge_datasets(keypoint_split, annotation_df):
-        """
-        Merge keypoint dataset with annotation dataframe by extracting
-        and matching the video name from the keypoint file path (__key__).
-        """
-        
-        def get_video_name_from_key(key: str) -> str:
-            # Extracts a directory name like '1QeMNh_DAqo_0-5-rgb_front'
-            dir_name = os.path.dirname(key).split('/')[-1]
-            
-            # Transform the key to match the CSV's VIDEO_NAME format.
-            # e.g., '1QeMNh_DAqo_0-5-rgb_front' -> '1QeMNh_DAqo-0-5-rgb_front'
-            # Assumes the YouTube video ID is 11 characters long.
-            if len(dir_name) > 11 and dir_name[11] == '_':
-                return dir_name[:11] + '-' + dir_name[12:]
-            return dir_name
-
-        # Map each keypoint entry to its corresponding sentence
-        sentences = []
-        for item in keypoint_split:
-            key = item['__key__']
-            video_name = get_video_name_from_key(key)
-            try:
-                # Find the sentence using the transformed video_name
-                sentence = annotation_df.loc[video_name, "SENTENCE"]
-            except KeyError:
-                # Handle cases where a video_name might not be in the annotations
-                # This warning should appear much less frequently now.
-                print(f"Warning: VIDEO_NAME '{video_name}' from key '{key}' not found in annotations. Using empty string.")
-                sentence = ""
-            sentences.append(sentence)
-            
-        return keypoint_split.add_column("SENTENCE", sentences)
-
-    keypoints_ds["train"] = merge_datasets(keypoints_ds["train"], train_ann)
-    keypoints_ds["validation"] = merge_datasets(keypoints_ds["validation"], val_ann)
-    if "test" in keypoints_ds:
-        keypoints_ds["test"] = merge_datasets(keypoints_ds["test"], test_ann)
-
-    # Get config values
-    feature_keys = data_cfg["feature_keys"]
-    sequence_key = data_cfg["sequence_key"]
-    gls_key = data_cfg["gls_key"]
-    txt_key = data_cfg["txt_key"]
-
-    # Create dataset objects for each split
-    train_data = SignTranslationDataset(
-        hf_split=keypoints_ds["train"],
-        feature_keys=feature_keys,
-        sequence_key=sequence_key,
-        gls_key=gls_key,
-        txt_key=txt_key,
-        phase="train",
-    )
+        sampler = TokenBatchSampler(dataset, batch_size, type="txt", shuffle=shuffle, level=level)
+    elif use_ddp:
+        sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=shuffle)
     
-    dev_data = SignTranslationDataset(
-        hf_split=keypoints_ds["validation"],
-        feature_keys=feature_keys,
-        sequence_key=sequence_key,
-        gls_key=gls_key,
-        txt_key=txt_key,
-        phase="dev",
-    )
-    
-    test_data = None
-    if "test" in keypoints_ds:
-        test_data = SignTranslationDataset(
-            hf_split=keypoints_ds["test"],
-            feature_keys=feature_keys,
-            sequence_key=sequence_key,
-            gls_key=gls_key,
-            txt_key=txt_key,
-            phase="test",
-        )
+    dataloader_shuffle = shuffle and sampler is None
 
-    # Build vocabularies from the training set
-    # Note: build_vocab needs to be adapted if it can't handle HF datasets
-    gls_vocab = build_vocab(data_cfg, dataset=train_data, vocab_type="gls")
-    txt_vocab = build_vocab(data_cfg, dataset=train_data, vocab_type="txt")
-
-    return train_data, dev_data, test_data, gls_vocab, txt_vocab
+    return DataLoader(
+        dataset=dataset,
+        batch_size=batch_size,
+        shuffle=dataloader_shuffle,
+        sampler=sampler,
+        drop_last=False,
+        collate_fn=PadCollate(
+            gls_vocab=gls_vocab,
+            txt_vocab=txt_vocab,
+            txt_pad_index=txt_vocab.stoi[PAD_TOKEN],
+            level=level,
+        ),
+        num_workers=num_workers,
+    ), sampler
 
 # Small helper property for vocabulary to make collate fn cleaner
 Vocabulary.is_word_level = property(lambda self: self.specials == [UNK_TOKEN, PAD_TOKEN, BOS_TOKEN, EOS_TOKEN])
