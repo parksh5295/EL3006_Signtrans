@@ -62,12 +62,43 @@ def train(cfg_file: str) -> None:
     data_module_name = data_cfg.get("data_module", "data")
     print(f"Using data module: {data_module_name}")
     data_module = importlib.import_module(f"signjoey.{data_module_name}")
-    load_data = data_module.load_data
+    
+    if data_module_name == "data_nonmap":
+        load_data_func = data_module.load_data_nonmap
+        make_data_iter_func = data_module.make_data_iter_nonmap
+        DatasetClass = data_module.SignTranslationDataset_NonMap
+    else: # original "data" module
+        load_data_func = data_module.load_data
+        make_data_iter_func = data_module.make_data_iter
+        DatasetClass = data_module.SignTranslationDataset
 
-    train_data, dev_data, test_data, gls_vocab, txt_vocab = load_data(
+    train_data, dev_data, test_data, gls_vocab, txt_vocab = load_data_func(
         data_cfg=data_cfg
     )
 
     if rank == 0:
         # store vocabularies
+        self.dev_data = dev_data
+        self.test_data = test_data
+
+        self.train_iter, self.train_sampler = make_data_iter_func(
+            dataset=self.train_data,
+            batch_size=self.batch_size,
+            gls_vocab=self.gls_vocab,
+            txt_vocab=self.txt_vocab,
+        )
+
+    trainer.train_and_validate(train_data=train_data, dev_data=dev_data)
+
+    if rank == 0:
+        # test the model
+        if test_data is not None:
+            trainer.testing(
+                test_data=test_data,
+                gls_vocab=gls_vocab,
+                txt_vocab=txt_vocab,
+            )
+    
+    if world_size > 1:
+        dist.destroy_process_group()
 # ... existing code ... 

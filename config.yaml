@@ -6,12 +6,31 @@ testing:
     tokenize: "13a"
 
 data:
-  # The module to use for data loading. Can be "data" (original) or "data_nonmap" (new).
-  data_module: "data"
-  # The base Hugging Face dataset to use.
-  # This can be a dataset ID from the Hub or a path to a local dataset loading script.
-  hf_dataset: "Saintbook/how2sign_keypoints"
+  # Use the new data loading pipeline
+  data_module: "data_nonmap"
+  
+  # Path to the actual keypoint data on Hugging Face
+  # This dataset contains the .npy files we need.
+  hf_keypoint_dataset: "how2sign/keypoints-body-2d-split"
 
-  # Root directory for local CSV annotation files.
+  # Root directory for local CSV annotation files
   csv_root: "/home/work/asic-3/input_data/csv_data"
+  
+  # Column names from the CSV to be used
+  sequence_key: "SENTENCE_NAME" # Will be used to match with keypoint filenames
+  gls_key: "SENTENCE"  # We will treat the sentence as the "gloss" for now
+  txt_key: "SENTENCE"  # And also as the text
+  
+  # Vocabulary settings (can be tuned later)
+  gls_vocab:
+    level: "word"
+    max_size: 10000
+    min_freq: 1
+  txt_vocab:
+    level: "word"
+    max_size: 10000
+    min_freq: 1
+    
+  # Feature configuration
+  feature_keys: ["data"] # The keypoint data is in the 'data' column of the HF dataset
 # ... existing code ... 
