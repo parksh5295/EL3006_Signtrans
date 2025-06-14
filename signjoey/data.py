@@ -22,6 +22,7 @@ from signjoey.vocabulary import (
 from signjoey.batch import Batch
 import pandas as pd
 from datasets import load_dataset, DatasetDict
+import os
 
 class SignTranslationDataset(Dataset):
     """
@@ -265,11 +266,43 @@ def make_data_iter(
 
 def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, TextVocabulary):
     """
-    Load data from Hugging Face datasets.
+    Load keypoint data from Hugging Face datasets and merge it with
+    text annotations from local CSV files.
     """
-    # Load the dataset from Hugging Face Hub
+    # 1. Load the keypoint dataset from Hugging Face Hub
     hf_dataset_id = data_cfg["hf_dataset"]
-    all_splits: DatasetDict = load_dataset(hf_dataset_id)
+    # all_splits: DatasetDict = load_dataset(hf_dataset_id)
+    print(f"Loading keypoint data from Hugging Face dataset: {hf_dataset_id}")
+    keypoints_ds: DatasetDict = load_dataset(hf_dataset_id)
+
+    # 2. Load the text annotations from local CSV files
+    csv_root = os.path.expanduser(data_cfg["csv_root"])
+    print(f"Loading text annotations from local CSV files in: {csv_root}")
+    
+    def load_annotations(split_name):
+        csv_path = os.path.join(csv_root, f"how2sign_realigned_{split_name}.csv")
+        if not os.path.exists(csv_path):
+            raise FileNotFoundError(f"Annotation file not found: {csv_path}")
+        # Use SENTENCE_NAME as index for easy merging
+        return pd.read_csv(csv_path, sep='\\t', engine='python').set_index("SENTENCE_NAME")
+
+    train_ann = load_annotations("train")
+    val_ann = load_annotations("val")
+    test_ann = load_annotations("test")
+
+    # 3. Merge text annotations into the keypoint datasets
+    print("Merging text data into keypoint dataset...")
+    
+    def merge_datasets(keypoint_split, annotation_df):
+        # Extract the SENTENCE column using the keypoint's SENTENCE_NAME
+        # Use .get(s, "") to handle cases where a sentence name might be missing in the csv
+        sentences = [annotation_df.loc[s_name].get("SENTENCE", "") for s_name in keypoint_split['SENTENCE_NAME']]
+        return keypoint_split.add_column("SENTENCE", sentences)
+
+    keypoints_ds["train"] = merge_datasets(keypoints_ds["train"], train_ann)
+    keypoints_ds["validation"] = merge_datasets(keypoints_ds["validation"], val_ann)
+    if "test" in keypoints_ds:
+        keypoints_ds["test"] = merge_datasets(keypoints_ds["test"], test_ann)
 
     # Get config values
     feature_keys = data_cfg["feature_keys"]
@@ -279,7 +312,7 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
 
     # Create dataset objects for each split
     train_data = SignTranslationDataset(
-        hf_split=all_splits["train"],
+        hf_split=keypoints_ds["train"],
         feature_keys=feature_keys,
         sequence_key=sequence_key,
         gls_key=gls_key,
@@ -288,7 +321,7 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
     )
     
     dev_data = SignTranslationDataset(
-        hf_split=all_splits["validation"],
+        hf_split=keypoints_ds["validation"],
         feature_keys=feature_keys,
         sequence_key=sequence_key,
         gls_key=gls_key,
@@ -297,9 +330,9 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
     )
     
     test_data = None
-    if "test" in all_splits:
+    if "test" in keypoints_ds:
         test_data = SignTranslationDataset(
-            hf_split=all_splits["test"],
+            hf_split=keypoints_ds["test"],
             feature_keys=feature_keys,
             sequence_key=sequence_key,
             gls_key=gls_key,

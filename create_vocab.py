@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from collections import Counter
 from typing import List, Set
-from datasets import load_dataset, DatasetDict, concatenate_datasets
+from datasets import Dataset, concatenate_datasets
 
 def create_vocab_file(tokens: List[str], output_file: str, min_freq: int = 1) -> None:
     """Create a vocabulary file from a list of tokens."""
@@ -24,22 +24,50 @@ def create_vocab_file(tokens: List[str], output_file: str, min_freq: int = 1) ->
         for token in vocab:
             f.write(f"{token}\n")
 
-def main_huggingface(
-    hf_dataset_id: str,
+def _tokenize_batch(batch, column_name: str):
+    """
+    Helper function to tokenize sentences from a specific column in a batch.
+    This is defined at the top level for robust pickling in multiprocessing.
+    """
+    if column_name not in batch:
+        raise KeyError(f"Column '{column_name}' not found in batch. Available: {list(batch.keys())}")
+    
+    sentences = batch[column_name]
+    # Filter out None or empty strings before splitting
+    return {"tokens": [s.split() for s in sentences if isinstance(s, str) and s]}
+
+def main_from_csv(
+    csv_root: str,
     text_col: str,
     gloss_col: str,
     output_dir: str,
     num_proc: int
 ):
     """
-    Generate vocabularies from a Hugging Face dataset in parallel.
-    """
+    Generate vocabularies from local CSV files in parallel.
     print(f"Loading dataset '{hf_dataset_id}' from Hugging Face Hub...")
     all_splits: DatasetDict = load_dataset(hf_dataset_id)
+    """
+    csv_root = os.path.expanduser(csv_root)
+    print(f"Loading CSV files from: {csv_root}")
+    
+    # Load all splits into pandas dataframes
+    splits = {}
+    for split_name in ["train", "val", "test"]:
+        csv_path = os.path.join(csv_root, f"how2sign_realigned_{split_name}.csv")
+        if os.path.exists(csv_path):
+            splits[split_name] = pd.read_csv(csv_path, sep='\\t', engine='python')
+        else:
+            print(f"Warning: {csv_path} not found. Skipping.")
+    
+    if not splits:
+        raise FileNotFoundError(f"No CSV files found in {csv_root}. Please check the path.")
 
-    # Combine all splits (train, validation, test) to build a comprehensive vocab
-    combined_dataset = concatenate_datasets([all_splits[s] for s in all_splits.keys()])
-
+    # Convert pandas dataframes to Hugging Face Datasets for easy mapping
+    # combined_dataset = concatenate_datasets([all_splits[s] for s in all_splits.keys()])
+    hf_datasets = {name: Dataset.from_pandas(df) for name, df in splits.items()}
+    combined_dataset = concatenate_datasets(list(hf_datasets.values()))
+    
     os.makedirs(output_dir, exist_ok=True)
     
     '''
@@ -54,25 +82,38 @@ def main_huggingface(
         os.path.join(data_dir, test_file), sep=separator, dtype=dtype_dict
     )
     '''
+
+    # --- PRE-FLIGHT CHECK: Fail fast if columns are missing ---
+    required_cols = {gloss_col, text_col}
+    available_cols = set(combined_dataset.column_names)
+    if not required_cols.issubset(available_cols):
+        missing_cols = required_cols - available_cols
+        raise ValueError(
+            f"ERROR: The specified columns {list(missing_cols)} were not found in the CSV files.\\n"
+            f"Available columns are: {list(available_cols)}"
+        )
+    # --- End of Check ---
+
     print(f"Processing glosses and texts in parallel with {num_proc} processes...")
     
-    def tokenize_sent(batch):
-        return {"tokens": [s.split() for s in batch if s]}
-
     # Process glosses
     gloss_tokens_dataset = combined_dataset.map(
-        lambda batch: tokenize_sent(batch[gloss_col]),
+        # lambda batch: tokenize_sent(batch[gloss_col]),
+        _tokenize_batch,
         batched=True,
         num_proc=num_proc,
+        fn_kwargs={"column_name": gloss_col},
         remove_columns=combined_dataset.column_names
     )
     all_glosses = [token for example in gloss_tokens_dataset for token in example['tokens']]
     
     # Process texts
     text_tokens_dataset = combined_dataset.map(
-        lambda batch: tokenize_sent(batch[text_col]),
+        # lambda batch: tokenize_sent(batch[text_col]),
+        _tokenize_batch,
         batched=True,
         num_proc=num_proc,
+        fn_kwargs={"column_name": text_col},
         remove_columns=combined_dataset.column_names
     )
     all_texts = [token for example in text_tokens_dataset for token in example['tokens']]
@@ -122,8 +163,8 @@ if __name__ == "__main__":
     # Use a portion of available CPUs for parallel processing
     num_cpus = max(1, os.cpu_count() // 2)
 
-    main_huggingface(
-        hf_dataset_id="Saintbook/how2sign_keypoints",
+    main_from_csv(
+        csv_root="~/asic-3/input_data/csv_data",
         gloss_col="SENTENCE",
         text_col="SENTENCE",
         output_dir="data/openpose",

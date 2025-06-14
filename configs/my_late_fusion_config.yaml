@@ -4,8 +4,11 @@ name: "late_fusion_experiment"
 # Data settings
 # ==============================================================================
 data:
-  # Hugging Face dataset identifier
+  # Hugging Face dataset identifier for keypoints
   hf_dataset: "my-username/how2sign_keypoints"
+  
+  # Root directory for local CSV annotation files
+  csv_root: "~/asic-3/input_data/csv_data"
   
   # Vocabulary files
   gls_vocab: "data/openpose/gloss.vocab"
