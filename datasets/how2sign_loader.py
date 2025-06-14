@@ -44,7 +44,7 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
             "validation": f"{self._BASE_URL}/val_2D_keypoints.tar.gz",
             "test": f"{self._BASE_URL}/test_2D_keypoints.tar.gz",
         }
-        keypoints_dirs = dl_manager.download_and_extract(keypoint_urls)
+        downloaded_archives = dl_manager.download(keypoint_urls)
 
         # 2. Define the paths to the LOCAL CSV files
         # These paths should match the environment where the code is run
@@ -67,7 +67,7 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
             datasets.SplitGenerator(
                 name=datasets.Split.TRAIN,
                 gen_kwargs={
-                    "keypoints_archive": keypoints_dirs["train"],
+                    "keypoints_archive": downloaded_archives["train"],
                     "csv_file": local_csv_paths["train"],
                     "dl_manager": dl_manager,
                 },
@@ -75,7 +75,7 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
             datasets.SplitGenerator(
                 name=datasets.Split.VALIDATION,
                 gen_kwargs={
-                    "keypoints_archive": keypoints_dirs["validation"],
+                    "keypoints_archive": downloaded_archives["validation"],
                     "csv_file": local_csv_paths["validation"],
                     "dl_manager": dl_manager,
                 },
@@ -83,7 +83,7 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
             datasets.SplitGenerator(
                 name=datasets.Split.TEST,
                 gen_kwargs={
-                    "keypoints_archive": keypoints_dirs["test"],
+                    "keypoints_archive": downloaded_archives["test"],
                     "csv_file": local_csv_paths["test"],
                     "dl_manager": dl_manager,
                 },
