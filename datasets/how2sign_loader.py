@@ -88,19 +88,20 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
     def _generate_examples(self, keypoints_dir, csv_file):
         df = pd.read_csv(csv_file, sep='\\t', engine='python')
         
-        for f_name in os.listdir(keypoints_dir):
-            if f_name.endswith('.npy'):
-                sentence_name = f_name.replace('.npy', '')
-                
-                row = df[df['SENTENCE_NAME'] == sentence_name]
-                if not row.empty:
-                    text = row.iloc[0]['SENTENCE']
+        for root, _, files in os.walk(keypoints_dir):
+            for f_name in files:
+                if f_name.endswith('.npy'):
+                    sentence_name = f_name.replace('.npy', '')
                     
-                    keypoint_file_path = os.path.join(keypoints_dir, f_name)
-                    keypoints_array = np.load(keypoint_file_path)
-                    
-                    yield sentence_name, {
-                        "sentence_name": sentence_name,
-                        "keypoints": keypoints_array.tolist(),
-                        "text": text,
-                    } 
+                    row = df[df['SENTENCE_NAME'] == sentence_name]
+                    if not row.empty:
+                        text = row.iloc[0]['SENTENCE']
+                        
+                        keypoint_file_path = os.path.join(root, f_name)
+                        keypoints_array = np.load(keypoint_file_path)
+                        
+                        yield sentence_name, {
+                            "sentence_name": sentence_name,
+                            "keypoints": keypoints_array.tolist(),
+                            "text": text,
+                        } 
