@@ -20,98 +20,46 @@ from signjoey.vocabulary import (
 )
 from signjoey.batch import Batch
 import pandas as pd
+from datasets import load_dataset, DatasetDict
 
 class SignTranslationDataset(Dataset):
     """
-    Load train, dev and optionally test data as specified in configuration.
-    Vocabularies are created from the training set with a limit of `voc_limit`
-    tokens and a minimum token frequency of `voc_min_freq`
-    (specified in the configuration dictionary).
-
-    The training data is filtered to include sentences up to `max_sent_length`
-    on source and target side.
-
-    If you set ``random_train_subset``, a random selection of this size is used
-    from the training set instead of the full training set.
-
-    If you set ``random_dev_subset``, a random selection of this size is used
-    from the dev development instead of the full development set.
-
-    :param data_cfg: configuration dictionary for data
-        ("data" part of configuration file)
-    :return:
-        - train_data: training dataset
-        - dev_data: development dataset
-        - test_data: test dataset if given, otherwise None
-        - gls_vocab: gloss vocabulary extracted from training data
-        - txt_vocab: spoken text vocabulary extracted from training data
-        
-    Dataset for sign language translation, modified to handle multiple feature sets.
+    Load data from a Hugging Face dataset.
+    Assumes the dataset has columns for sequence_key, gls_key, txt_key,
+    and feature columns as specified in feature_keys.
     """
 
     def __init__(
         self,
-        path: str,
-        sgn_dirs: Dict[str, str], # Expects a dict like {'pose': 'path/to/pose', ...}
+        hf_split: Dataset,
+        feature_keys: List[str],
         sequence_key: str,
         gls_key: str,
         txt_key: str,
-        level: str = "word",
-        max_len: int = -1,
+        # level: str = "word",
+        # max_len: int = -1,
         phase: str = "train",
     ):
-        self.level = level
-        self.phase = phase
-        self.data = self._load_data(path, max_len)
-
+        self.hf_split = hf_split
+        self.feature_keys = feature_keys
         self.sequence_key = sequence_key
         self.gls_key = gls_key
         self.txt_key = txt_key
-        
-        # Store directories for different feature types
-        self.sgn_dirs = sgn_dirs
-        self.feature_keys = list(self.sgn_dirs.keys())
-
-        # Frame subsampling (optional, can be set from training script)
+        self.phase = phase
         self.frame_subsampling_ratio = None
 
-    def _load_data(self, path: str, max_len: int = -1):
-        # with open(path, "rb") as f:
-        #     data = pickle.load(f)
-        """Load data from TSV/CSV file."""
-        # Read file
-        if path.endswith(".tsv"):
-            df = pd.read_csv(path, sep="\t")
-        elif path.endswith(".csv"):
-            # Use Python engine to auto-detect separator for CSVs
-            df = pd.read_csv(path, sep=None, engine="python")
-        else:
-            # Assume TSV for backward compatibility
-            df = pd.read_csv(path, sep="\t")
-        
-        # Convert DataFrame to list of dictionaries
-        data = df.to_dict("records")
-        
-        if max_len > 0:
-            return data[:max_len]
-        return data
-
     def __len__(self):
-        return len(self.data)
+        return len(self.hf_split)
 
     def __getitem__(self, idx: int) -> Dict:
-        item = self.data[idx]
+        item = self.hf_split[idx]
         
         # Load features from their respective directories
         features = {}
         for key in self.feature_keys:
-            sgn_path = f"{self.sgn_dirs[key]}/{item[self.sequence_key]}.npy"
-            try:
-                feature_data = np.load(sgn_path)
-            except FileNotFoundError:
-                # Handle cases where a feature file might be missing if necessary
-                # For now, we'll raise an error.
-                raise FileNotFoundError(f"Feature file not found: {sgn_path}")
+            # Assuming feature columns are named e.g., 'pose', 'hands', 'face'
+            # and contain list/numpy array data.
+            feature_data = np.array(item[key], dtype=np.float32)
 
             if self.frame_subsampling_ratio and self.frame_subsampling_ratio > 1:
                 feature_data = feature_data[:: self.frame_subsampling_ratio]
@@ -140,12 +88,13 @@ class TokenBatchSampler(Sampler):
         
         # Determine lengths based on gloss or text
         if self.type == "gls":
-            self.lengths = [len(s[dataset.gls_key].split()) for s in self.dataset.data]
+            # self.lengths = [len(s[dataset.gls_key].split()) for s in self.dataset.data]
+            self.lengths = [len(s[dataset.gls_key].split()) for s in self.dataset.hf_split]
         else:  # txt
             if self.dataset.level == "word":
-                self.lengths = [len(s[dataset.txt_key].split()) for s in self.dataset.data]
+                self.lengths = [len(s[dataset.txt_key].split()) for s in self.dataset.hf_split]
             else:
-                self.lengths = [len(s[dataset.txt_key]) for s in self.dataset.data]
+                self.lengths = [len(s[dataset.txt_key]) for s in self.dataset.hf_split]
 
     def __iter__(self):
         indices = list(range(len(self.dataset)))
@@ -310,55 +259,52 @@ def make_data_iter(
 
 def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, TextVocabulary):
     """
-    Load data from files and create datasets for training, development, and testing.
+    Load data from Hugging Face datasets.
     """
-    # Load vocabularies
-    gls_vocab_path = data_cfg.get("gls_vocab", "data/gloss.vocab")
-    txt_vocab_path = data_cfg.get("txt_vocab", "data/text.vocab")
-    gls_vocab = GlossVocabulary(file=gls_vocab_path)
-    txt_vocab = TextVocabulary(file=txt_vocab_path)
+    # Load the dataset from Hugging Face Hub
+    hf_dataset_id = data_cfg["hf_dataset"]
+    all_splits: DatasetDict = load_dataset(hf_dataset_id)
 
-    # Get feature directories
-    sgn_dirs = data_cfg.get("sgn_dirs")
-    if not sgn_dirs:
-        raise ValueError("`sgn_dirs` must be specified in the data configuration.")
-        
-    # Get other configuration keys
-    sequence_key = data_cfg.get("sequence_key", "name")
-    gls_key = data_cfg.get("gls_key", "gloss")
-    txt_key = data_cfg.get("txt_key", "text")
-    level = data_cfg.get("level", "word")
+    # Get config values
+    feature_keys = data_cfg["feature_keys"]
+    sequence_key = data_cfg["sequence_key"]
+    gls_key = data_cfg["gls_key"]
+    txt_key = data_cfg["txt_key"]
 
-    # Create datasets
+    # Create dataset objects for each split
     train_data = SignTranslationDataset(
-        path=data_cfg["train"],
-        sgn_dirs=sgn_dirs,
+        hf_split=all_splits["train"],
+        feature_keys=feature_keys,
         sequence_key=sequence_key,
         gls_key=gls_key,
         txt_key=txt_key,
-        level=level,
         phase="train",
     )
     
     dev_data = SignTranslationDataset(
-        path=data_cfg["dev"],
-        sgn_dirs=sgn_dirs,
+        hf_split=all_splits["validation"],
+        feature_keys=feature_keys,
         sequence_key=sequence_key,
         gls_key=gls_key,
         txt_key=txt_key,
-        level=level,
         phase="dev",
     )
     
-    test_data = SignTranslationDataset(
-        path=data_cfg["test"],
-        sgn_dirs=sgn_dirs,
-        sequence_key=sequence_key,
-        gls_key=gls_key,
-        txt_key=txt_key,
-        level=level,
-        phase="test",
-    )
+    test_data = None
+    if "test" in all_splits:
+        test_data = SignTranslationDataset(
+            hf_split=all_splits["test"],
+            feature_keys=feature_keys,
+            sequence_key=sequence_key,
+            gls_key=gls_key,
+            txt_key=txt_key,
+            phase="test",
+        )
+
+    # Build vocabularies from the training set
+    # Note: build_vocab needs to be adapted if it can't handle HF datasets
+    gls_vocab = build_vocab(data_cfg, dataset=train_data, vocab_type="gls")
+    txt_vocab = build_vocab(data_cfg, dataset=train_data, vocab_type="txt")
 
     return train_data, dev_data, test_data, gls_vocab, txt_vocab
 
