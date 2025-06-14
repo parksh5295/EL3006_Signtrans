@@ -283,8 +283,21 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
         csv_path = os.path.join(csv_root, f"how2sign_realigned_{split_name}.csv")
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"Annotation file not found: {csv_path}")
+        
+        # Read the dataframe
+        df = pd.read_csv(csv_path, sep='\\t', engine='python')
+        
+        # --- NEW DEBUG ---
+        print(f"\n=== Debug: Raw CSV Columns for {split_name} ===")
+        print(df.columns.tolist())
+        print(f"--- First 3 rows of {split_name} CSV ---")
+        print(df.head(3))
+        print("=========================================\n")
+        # --- END DEBUG ---
+
         # Use VIDEO_NAME as index for easy merging
-        return pd.read_csv(csv_path, sep='\\t', engine='python').set_index("VIDEO_NAME")
+        # return pd.read_csv(csv_path, sep='\\t', engine='python').set_index("VIDEO_NAME")
+        return df.set_index("VIDEO_NAME")
 
     train_ann = load_annotations("train")
     val_ann = load_annotations("val")
