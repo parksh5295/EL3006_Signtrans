@@ -91,13 +91,23 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
         ]
 
     def _generate_examples(self, keypoints_archive, csv_file, dl_manager):
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+        logging.info(f"Reading CSV file from {csv_file}")
         df = pd.read_csv(csv_file, sep='\\t', engine='python')
+        logging.info("CSV reading complete. Starting to iterate main archive...")
         
+        outer_file_count = 0
+        matched_count = 0
         # Iterate through the outer tar.gz archive
         for path, file in dl_manager.iter_archive(keypoints_archive):
+            outer_file_count += 1
+            if outer_file_count % 500 == 0:
+                logging.info(f"Scanned {outer_file_count} files in outer archive...")
+
             # We are looking for nested tar.gz files
             if path.endswith(".tar.gz"):
-                # Stream the content of the nested tar.gz file
+                logging.info(f"Found nested archive: {path}. Reading its content...")
                 nested_archive_content = io.BytesIO(file.read())
                 
                 # Iterate through the inner (nested) tar.gz archive
@@ -108,6 +118,10 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
                             
                             row = df[df['SENTENCE_NAME'] == sentence_name]
                             if not row.empty:
+                                matched_count += 1
+                                if matched_count % 100 == 0:
+                                    logging.info(f"Found {matched_count} matching examples so far...")
+                                
                                 text = row.iloc[0]['SENTENCE']
                                 
                                 # Extract and load the .npy file content
@@ -118,4 +132,5 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
                                     "sentence_name": sentence_name,
                                     "keypoints": keypoints_array.tolist(),
                                     "text": text,
-                                } 
+                                }
+        logging.warning(f"--- Finished archive iteration. Total outer files: {outer_file_count}, Total matched examples: {matched_count} ---") 
