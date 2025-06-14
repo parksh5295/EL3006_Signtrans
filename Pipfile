@@ -4,14 +4,14 @@ verify_ssl = true
 name = "pypi"
 
 [[source]]
-url = "https://download.pytorch.org/whl/cu118"
+url = "https://download.pytorch.org/whl/cu117"
 verify_ssl = true
-name = "pytorch-cuda118"
+name = "pytorch-cuda117"
 
 [packages]
-torch = {version = "==2.1.0", index = "pytorch-cuda118"}
-torchvision = {version = "==0.16.0", index = "pytorch-cuda118"}
-torchtext = {version = "==0.16.0", index = "pytorch-cuda118"}
+torch = {version = "==2.0.1", index = "pytorch-cuda117"}
+torchvision = {version = "==0.15.2", index = "pytorch-cuda117"}
+torchtext = {version = "==0.15.2", index = "pytorch-cuda117"}
 datasets = "*"
 tensorflow = "==2.15.0"
 tensorflow-estimator = "==2.15.0"
