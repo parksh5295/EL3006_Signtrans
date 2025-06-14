@@ -12,6 +12,8 @@ name = "pytorch-cuda117"
 torch = {version = "==2.0.1", index = "pytorch-cuda117"}
 torchvision = {version = "==0.15.2", index = "pytorch-cuda117"}
 torchtext = {version = "==0.15.2", index = "pytorch-cuda117"}
+torchaudio = {version = "==2.0.2", index = "pytorch-cuda117"}
+torchdata = "==0.6.1"
 datasets = "*"
 tensorflow = "==2.15.0"
 tensorflow-estimator = "==2.15.0"
