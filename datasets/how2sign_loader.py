@@ -3,6 +3,7 @@ import tarfile
 import numpy as np
 import pandas as pd
 import os
+import logging
 
 _DESCRIPTION = "How2Sign 2D Keypoints dataset"
 _HOMEPAGE = "https://github.com/how2sign/how2sign"
@@ -86,15 +87,35 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
         ]
 
     def _generate_examples(self, keypoints_dir, csv_file):
-        df = pd.read_csv(csv_file, sep='\\t', engine='python')
+        logging.basicConfig(level=logging.INFO)
+        logging.info(f"--- Starting data generation for split ---")
+        logging.info(f"Attempting to read keypoints from: {keypoints_dir}")
+        logging.info(f"Attempting to read annotations from: {csv_file}")
+        
+        try:
+            df = pd.read_csv(csv_file, sep='\\t', engine='python')
+            logging.info(f"Successfully loaded CSV. Columns: {df.columns.tolist()}")
+            logging.info(f"First 5 SENTENCE_NAME entries from CSV:\n{df['SENTENCE_NAME'].head().to_string()}")
+        except Exception as e:
+            logging.error(f"Failed to load or process CSV file: {e}")
+            return
+
+        found_npy_files_count = 0
+        matched_files_count = 0
+        npy_file_examples = []
         
         for root, _, files in os.walk(keypoints_dir):
             for f_name in files:
                 if f_name.endswith('.npy'):
+                    found_npy_files_count += 1
+                    if len(npy_file_examples) < 5:
+                        npy_file_examples.append(f_name)
+
                     sentence_name = f_name.replace('.npy', '')
                     
                     row = df[df['SENTENCE_NAME'] == sentence_name]
                     if not row.empty:
+                        matched_files_count += 1
                         text = row.iloc[0]['SENTENCE']
                         
                         keypoint_file_path = os.path.join(root, f_name)
@@ -104,4 +125,10 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
                             "sentence_name": sentence_name,
                             "keypoints": keypoints_array.tolist(),
                             "text": text,
-                        } 
+                        }
+        
+        logging.warning(f"--- Generation summary ---")
+        logging.warning(f"Total .npy files found: {found_npy_files_count}")
+        logging.warning(f"Total files matched with CSV: {matched_files_count}")
+        if found_npy_files_count > 0:
+            logging.warning(f"First 5 .npy filenames found: {npy_file_examples}") 
