@@ -65,21 +65,21 @@ class How2SignKeypoints(datasets.GeneratorBasedBuilder):
             datasets.SplitGenerator(
                 name=datasets.Split.TRAIN,
                 gen_kwargs={
-                    "keypoints_dir": os.path.join(keypoints_dirs["train"], "openpose_output_fps_25/json"),
+                    "keypoints_dir": keypoints_dirs["train"],
                     "csv_file": local_csv_paths["train"],
                 },
             ),
             datasets.SplitGenerator(
                 name=datasets.Split.VALIDATION,
                 gen_kwargs={
-                    "keypoints_dir": os.path.join(keypoints_dirs["validation"], "openpose_output_fps_25/json"),
+                    "keypoints_dir": keypoints_dirs["validation"],
                     "csv_file": local_csv_paths["validation"],
                 },
             ),
             datasets.SplitGenerator(
                 name=datasets.Split.TEST,
                 gen_kwargs={
-                    "keypoints_dir": os.path.join(keypoints_dirs["test"], "openpose_output_fps_25/json"),
+                    "keypoints_dir": keypoints_dirs["test"],
                     "csv_file": local_csv_paths["test"],
                 },
             ),

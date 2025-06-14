@@ -43,7 +43,7 @@ training:
   
   # Training-related settings
   shuffle: true
-  epochs: 3
+  epochs: 50
   batch_size: 32
   batch_type: "sentence"
   batch_multiplier: 1
