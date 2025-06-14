@@ -15,7 +15,8 @@ data:
   txt_vocab: "data/openpose/text.vocab"
   
   # Column names in the dataset
-  sequence_key: "SENTENCE_NAME"
+  # sequence_key: "SENTENCE_NAME"
+  sequence_key: "__key__"
   gls_key: "SENTENCE"
   txt_key: "SENTENCE"
   

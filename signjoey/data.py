@@ -294,10 +294,27 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, Te
     print("Merging text data into keypoint dataset...")
     
     def merge_datasets(keypoint_split, annotation_df):
-        # Extract the SENTENCE column using the keypoint's SENTENCE_NAME
-        # Use .get(s, "") to handle cases where a sentence name might be missing in the csv
-        sentences = [annotation_df.loc[s_name].get("SENTENCE", "") for s_name in keypoint_split['SENTENCE_NAME']]
-        return keypoint_split.add_column("SENTENCE", sentences)
+        """
+        Merge keypoint dataset with annotation dataframe.
+        
+        Args:
+            keypoint_split: Hugging Face dataset split
+            annotation_df: Pandas DataFrame with annotations
+            
+        Returns:
+            Merged dataset
+        """
+        # Debug prints
+        print("\n=== Debug: Dataset Structure ===")
+        print("Hugging Face Dataset columns:", keypoint_split.column_names)
+        print("First few keys in HF dataset:", [keypoint_split[i]['__key__'] for i in range(min(3, len(keypoint_split)))])
+        print("\nAnnotation DataFrame columns:", annotation_df.columns.tolist())
+        print("First few SENTENCE_NAMEs in annotation:", annotation_df['SENTENCE_NAME'].head(3).tolist())
+        print("================================\n")
+        
+        # Original merge logic
+        sentences = [annotation_df.loc[s_name].get("SENTENCE", "") for s_name in keypoint_split['__key__']]
+        return keypoint_split.add_column("sentence", sentences)
 
     keypoints_ds["train"] = merge_datasets(keypoints_ds["train"], train_ann)
     keypoints_ds["validation"] = merge_datasets(keypoints_ds["validation"], val_ann)
