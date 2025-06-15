@@ -4,6 +4,7 @@ Data module
 """
 # import pickle
 import os
+import random
 import pandas as pd
 import torch
 import numpy as np
@@ -25,7 +26,7 @@ from signjoey.batch import Batch
 from signjoey.phoenix_utils.phoenix_cleanup import clean_phoenix_2014
 
 # ==============================================================================
-# Helper functions for data loading and merging
+# Main data loading function
 # ==============================================================================
 
 def get_lookup_dict(annotation_df: pd.DataFrame) -> Dict[str, str]:

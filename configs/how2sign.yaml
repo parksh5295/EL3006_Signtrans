@@ -1,0 +1,35 @@
+# ==============================================================================
+# Configuration for Time-Alignment Pre-training on How2Sign
+# ==============================================================================
+
+name: "how2sign_time_alignment"
+
+data:
+  # Hugging Face dataset repository for the keypoints
+  hf_keypoint_dataset: "Saintbook/how2sign_keypoints"
+
+  # (Optional) Limit the number of items to scan from the dataset for faster debugging.
+  # For a full run, comment this out or set to -1.
+  dataset_subset_size: 50000
+
+  # Number of workers for the DataLoader
+  num_workers: 4
+
+training:
+  # Batch size for training. Adjust based on GPU memory.
+  batch_size: 8
+
+model:
+  # --- Time-Alignment Task Settings ---
+  # Total dimension of the flattened keypoint features.
+  # This should match the output of the data loader.
+  sgn_dim: 411
+
+  # Dimension of the pose features for the alignment model
+  alignment_pose_dim: 138
+
+  # Dimension of the remaining features (hands + face) for the alignment model
+  alignment_hands_dim: 273
+
+  # The embedding size for the alignment model's projection layer
+  embedding_size: 256 

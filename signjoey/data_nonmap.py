@@ -1,25 +1,22 @@
-# coding: utf-8
 """
-Data module for How2Sign, correctly processing remote keypoint archives and local CSVs.
+Data module for time-alignment pre-training.
+Loads ONLY keypoint data from How2Sign without any text annotations.
 """
 import os
-import pandas as pd
 from typing import List, Dict, Tuple
 import json
 from tqdm import tqdm
-import datasets  # Import the datasets library
-from collections import Counter
+import datasets
+from collections import defaultdict
 
 import torch
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
-from huggingface_hub import hf_hub_download, list_repo_files
+from huggingface_hub import hf_hub_download
 
-from signjoey.vocabulary import GlossVocabulary, TextVocabulary, BOS_TOKEN, PAD_TOKEN
 from signjoey.batch import Batch
 
 # A cache for downloaded keypoint files to avoid re-downloading during a run.
-# This is a simple in-memory cache. For larger datasets, a disk-based cache might be better.
 KP_CACHE = {}
 
 # Order of keypoints from the 'GloFE' project's GitHub issues
@@ -39,7 +36,6 @@ def load_and_parse_keypoint_file(repo_id: str, filepath: str) -> torch.Tensor:
         return KP_CACHE[filepath]
     
     try:
-        # The filepath here is the full filename including the .json extension
         local_path = hf_hub_download(repo_id=repo_id, filename=filepath, repo_type="dataset")
         with open(local_path, 'r') as f:
             data = json.load(f)
@@ -51,146 +47,86 @@ def load_and_parse_keypoint_file(repo_id: str, filepath: str) -> torch.Tensor:
             kp = person_data.get(key, [])
             frame_keypoints.extend(kp)
             
-        # The tensor should be a flat 1D vector of all keypoint coordinates.
         tensor = torch.tensor(frame_keypoints, dtype=torch.float32)
-
         KP_CACHE[filepath] = tensor
         return tensor
         
-    except Exception as e:
-        # print(f"Warning: Could not load or parse {filepath}. Error: {e}")
+    except Exception:
         return None
 
-
-def load_data_nonmap(data_cfg: dict) -> Tuple[Dataset, Dataset, Dataset, GlossVocabulary, TextVocabulary]:
+def load_data_nonmap(data_cfg: dict) -> Tuple[Dataset, Dataset, Dataset, None, None]:
     """
-    Loads data by streaming a Hugging Face dataset, mapping keys to local CSV annotations.
+    Loads data for time-alignment. It scans all splits ('train', 'val', 'test')
+    to create a comprehensive map of all available video clips and their frames.
+    It does NOT load any text annotations.
     """
-    print("--- Starting data loading (nonmap v4: HF datasets streaming) ---")
+    print("--- Starting data loading (nonmap for time-alignment) ---")
     
     repo_id = data_cfg["hf_keypoint_dataset"]
-    csv_root = data_cfg["csv_root"]
-
-    print(f"Streaming dataset from HF Hub: {repo_id}...")
-    try:
-        # Load the dataset in streaming mode to avoid downloading everything at once.
-        hf_dataset = datasets.load_dataset(repo_id, streaming=True, split="train")
-        print("Successfully started streaming.")
-    except Exception as e:
-        raise IOError(f"Could not load or stream dataset '{repo_id}' from Hugging Face Hub. "
-                      f"Please check repo name and your connection. Error: {e}")
-
-    # --- Limit dataset size for quick testing ---
-    subset_size = data_cfg.get("dataset_subset_size", -1)
-    if subset_size > 0:
-        print(f"Limiting dataset scan to the first {subset_size} items for speed.")
-        hf_dataset = hf_dataset.take(subset_size)
-
-    # Create a mapping from SENTENCE_NAME (video clip) to its frame file keys (__key__)
-    print("Creating a map from video clips to frame files from the dataset stream...")
-    clip_to_frames_map = {}
-    # We iterate through the dataset to build the map. This might take a moment.
-    for item in tqdm(hf_dataset, desc="Scanning dataset stream"):
-        key = item.get("__key__")
-        # The key from the stream does not include the .json extension, so we check for the base name.
-        if key and key.endswith("_keypoints"):
-            # e.g., "openpose_output/json/VIDEO_CLIP_NAME/FRAME_FILE_keypoints"
-            parts = key.split('/')
-            if len(parts) >= 3:
-                clip_name = parts[2]
-                if clip_name not in clip_to_frames_map:
-                    clip_to_frames_map[clip_name] = []
-                # We need to append the .json extension for the actual download filename
-                clip_to_frames_map[clip_name].append(key + ".json")
     
+    print(f"Streaming dataset from HF Hub: {repo_id}...")
+    
+    # --- Create a comprehensive map from ALL splits ---
+    clip_to_frames_map = defaultdict(list)
+    
+    for split in ["train", "val", "test"]:
+        print(f"Scanning '{split}' split for video clips...")
+        try:
+            hf_dataset = datasets.load_dataset(repo_id, streaming=True, split=split)
+            
+            subset_size = data_cfg.get("dataset_subset_size", -1)
+            if subset_size > 0:
+                print(f"Limiting scan to the first {subset_size} items for speed.")
+                hf_dataset = hf_dataset.take(subset_size)
+
+            for item in tqdm(hf_dataset, desc=f"Scanning {split}"):
+                key = item.get("__key__")
+                if key and key.endswith("_keypoints"):
+                    parts = key.split('/')
+                    if len(parts) >= 3:
+                        clip_name = parts[2]
+                        # Append the .json extension for the actual download filename
+                        clip_to_frames_map[clip_name].append(key + ".json")
+        except Exception as e:
+            print(f"Warning: Could not load or stream split '{split}'. Error: {e}")
+
     if not clip_to_frames_map:
-        raise ValueError("Could not find any keypoint files in the dataset stream. "
-                         "Please check the dataset structure and the `__key__` field.")
+        raise ValueError("Could not find any keypoint files in the dataset stream.")
 
-    print(f"Mapped {len(clip_to_frames_map)} unique video clips.")
+    print(f"Mapped {len(clip_to_frames_map)} unique video clips across all splits.")
 
-    # Sort the frames within each clip chronologically based on the filename in the key
+    # Sort the frames within each clip chronologically
     for clip_name in clip_to_frames_map:
         clip_to_frames_map[clip_name].sort()
 
-    def build_split(split_name: str):
-        """Builds a dataset split by reading a CSV and matching with the file map."""
-        csv_path = os.path.join(csv_root, f"how2sign_realigned_{split_name}.csv")
-        df = pd.read_csv(csv_path, sep='\\t', engine='python')
-        
-        data_list = []
-        print(f"Processing {split_name} split...")
-        for _, row in tqdm(df.iterrows(), total=len(df)):
-            sentence_name = row["SENTENCE_NAME"]
-            if sentence_name in clip_to_frames_map:
-                data_list.append({
-                    "sequence_name": sentence_name,
-                    "text": row["SENTENCE"],
-                    "gloss": row.get("GLOSS", ""),
-                    "frame_files": clip_to_frames_map[sentence_name]
-                })
-        
-        print(f"Matched {len(data_list)} of {len(df)} entries in {os.path.basename(csv_path)}")
-        if len(data_list) == 0 and len(df) > 0:
-            print(f"WARNING: No matches found for split '{split_name}'. The vocabulary might be incomplete "
-                  f"and this split will be empty. Check for mismatches between CSV SENTENCE_NAMEs "
-                  f"and clip names in the HF dataset (e.g., '{next(iter(clip_to_frames_map.keys()))}')")
-        return data_list
-
-    train_list = build_split("train")
-    dev_list = build_split("val")
-    test_list = build_split("test")
-
-    if not train_list:
-        raise ValueError("The training data list is empty. Vocabulary cannot be built. "
-                         "Please check the matching logic and data files.")
-
-    print("Building vocabularies...")
-
-    def build_vocab_from_list(data: List[Dict], field: str, cfg: Dict) -> List[str]:
-        """Tokenizes and builds a vocabulary from a list of data dictionaries."""
-        counter = Counter()
-        for item in data:
-            tokens = item[field].lower().split() if field == 'text' else item[field].split()
-            counter.update(tokens)
-        
-        # Filter by minimum frequency
-        if "min_freq" in cfg:
-            min_freq = cfg["min_freq"]
-            counter = Counter({t: c for t, c in counter.items() if c >= min_freq})
-        
-        # Sort by frequency, then alphabetically
-        sorted_tokens = sorted(counter.keys(), key=lambda t: (-counter[t], t))
-        
-        # Cut to max size
-        if "max_size" in cfg:
-            max_size = cfg["max_size"]
-            sorted_tokens = sorted_tokens[:max_size]
-            
-        return sorted_tokens
-
-    txt_tokens = build_vocab_from_list(train_list, 'text', data_cfg["txt_vocab"])
-    gls_tokens = build_vocab_from_list(train_list, 'gloss', data_cfg["gls_vocab"])
-
-    txt_vocab = TextVocabulary(tokens=txt_tokens)
-    gls_vocab = GlossVocabulary(tokens=gls_tokens)
+    # Since we don't use CSVs, we just use the keys from our map as the data
+    all_clips = list(clip_to_frames_map.keys())
     
-    train_dataset = SignTranslationDataset_NonMap(train_list, repo_id, data_cfg)
-    dev_dataset = SignTranslationDataset_NonMap(dev_list, repo_id, data_cfg)
-    test_dataset = SignTranslationDataset_NonMap(test_list, repo_id, data_cfg)
+    # We can create dummy splits, or just use all data as 'train' for pre-training
+    # For simplicity, let's just create one big dataset.
+    data_list = [
+        {"sequence_name": name, "frame_files": files}
+        for name, files in clip_to_frames_map.items()
+    ]
 
-    return train_dataset, dev_dataset, test_dataset, gls_vocab, txt_vocab
+    print(f"Created a single dataset with {len(data_list)} clips for time-alignment.")
+    
+    # We create one dataset and return it for all splits (train, dev, test)
+    # The training script can then decide which one to use.
+    alignment_dataset = TimeAlignmentDataset(data_list, repo_id)
+
+    # Return the dataset and None for vocabs
+    return alignment_dataset, alignment_dataset, alignment_dataset, None, None
 
 
-class SignTranslationDataset_NonMap(Dataset):
+class TimeAlignmentDataset(Dataset):
     """
-    A PyTorch Dataset that loads keypoint data frame-by-frame from the HF Hub
-    based on a pre-computed file list.
+    A PyTorch Dataset for time-alignment pre-training. It loads keypoint data
+    frame-by-frame from the HF Hub.
     """
-    def __init__(self, data_list: List[Dict], repo_id: str, data_cfg: dict):
+    def __init__(self, data_list: List[Dict], repo_id: str):
         self.data_list = data_list
         self.repo_id = repo_id
-        self.data_cfg = data_cfg
         
     def __len__(self):
         return len(self.data_list)
@@ -205,70 +141,54 @@ class SignTranslationDataset_NonMap(Dataset):
                 frame_tensors.append(tensor)
         
         if not frame_tensors:
-            # Return a dummy tensor if no frames could be loaded for this item
-            # This should be handled by the collate function
-            features = torch.zeros((1, 225), dtype=torch.float32) # 75 keypoints * 3 coords
+            # Return a dummy tensor if no frames could be loaded.
+            # Shape: (1, 411) - based on previous findings.
+            features = torch.zeros((1, 411), dtype=torch.float32)
         else:
-            # Stack all frame tensors to create the full sequence tensor
             features = torch.stack(frame_tensors, dim=0)
             
         return {
             "sequence": item["sequence_name"],
-            "gls": item["gloss"],
-            "txt": item["text"],
             "features": features,
         }
 
-class PadCollate_NonMap:
-    def __init__(self, gls_vocab: GlossVocabulary, txt_vocab: TextVocabulary, rank: int = 0):
-        self.gls_vocab = gls_vocab
-        self.txt_vocab = txt_vocab
-        self.rank = rank
-
-    def __call__(self, batch: List[Dict]) -> Batch:
+class PadCollate_TimeAlignment:
+    """A collate_fn for time-alignment that only pads features."""
+    def __call__(self, batch: List[Dict]) -> Dict:
         # Filter out items where features might be empty
         batch = [b for b in batch if b["features"].shape[0] > 1]
         if not batch:
-            return None # Should not happen in practice if data is clean
+            return None
 
         sequences = [b["sequence"] for b in batch]
-        gls_list = [b["gls"] for b in batch]
-        txt_list = [b["txt"] for b in batch]
         features = [b["features"] for b in batch]
 
         padded_features = pad_sequence(features, batch_first=True, padding_value=0.0)
         feature_lengths = torch.tensor([f.shape[0] for f in features])
 
-        gls_ids, gls_lengths = self.gls_vocab.sentences_to_ids(gls_list)
-        txt_ids, txt_lengths = self.txt_vocab.sentences_to_ids(txt_list)
-        
-        txt_input = torch.full((txt_ids.shape[0], txt_ids.shape[1] + 1), self.txt_vocab.stoi[BOS_TOKEN], dtype=torch.long)
-        txt_input[:, 1:] = txt_ids
+        return {
+            "sequences": sequences,
+            "features": padded_features,
+            "feature_lengths": feature_lengths
+        }
 
-        return Batch(
-            is_train=True, features=[padded_features], feature_lengths=[feature_lengths],
-            sgn=None, sgn_mask=None, sgn_lengths=None, gls=gls_ids, gls_lengths=gls_lengths,
-            txt=txt_ids, txt_input=txt_input, txt_lengths=txt_lengths,
-            txt_pad_index=self.txt_vocab.stoi[PAD_TOKEN], sequence=sequences,
-            rank=self.rank,
-        )
-
-# This function remains the same as before
-from torch.utils.data.distributed import DistributedSampler
 def make_data_iter_nonmap(
-    dataset: Dataset, batch_size: int, gls_vocab: GlossVocabulary,
-    txt_vocab: TextVocabulary, shuffle: bool = False, use_ddp: bool = False,
+    dataset: Dataset, batch_size: int, shuffle: bool = False, use_ddp: bool = False,
     rank: int = 0, world_size: int = 1, num_workers: int = 4
 ) -> torch.utils.data.DataLoader:
     
-    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=shuffle) if use_ddp else None
-    
+    sampler = None
+    if use_ddp:
+        sampler = torch.utils.data.distributed.DistributedSampler(
+            dataset, num_replicas=world_size, rank=rank, shuffle=shuffle
+        )
+
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=(shuffle and not use_ddp),
+        shuffle=shuffle and sampler is None,
         sampler=sampler,
-        collate_fn=PadCollate_NonMap(gls_vocab, txt_vocab, rank=rank),
         num_workers=num_workers,
+        collate_fn=PadCollate_TimeAlignment(),
         pin_memory=True,
     )
