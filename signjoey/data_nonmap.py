@@ -220,9 +220,10 @@ class SignTranslationDataset_NonMap(Dataset):
         }
 
 class PadCollate_NonMap:
-    def __init__(self, gls_vocab: GlossVocabulary, txt_vocab: TextVocabulary):
+    def __init__(self, gls_vocab: GlossVocabulary, txt_vocab: TextVocabulary, rank: int = 0):
         self.gls_vocab = gls_vocab
         self.txt_vocab = txt_vocab
+        self.rank = rank
 
     def __call__(self, batch: List[Dict]) -> Batch:
         # Filter out items where features might be empty
@@ -249,6 +250,7 @@ class PadCollate_NonMap:
             sgn=None, sgn_mask=None, sgn_lengths=None, gls=gls_ids, gls_lengths=gls_lengths,
             txt=txt_ids, txt_input=txt_input, txt_lengths=txt_lengths,
             txt_pad_index=self.txt_vocab.stoi[PAD_TOKEN], sequence=sequences,
+            rank=self.rank,
         )
 
 # This function remains the same as before
@@ -256,12 +258,17 @@ from torch.utils.data.distributed import DistributedSampler
 def make_data_iter_nonmap(
     dataset: Dataset, batch_size: int, gls_vocab: GlossVocabulary,
     txt_vocab: TextVocabulary, shuffle: bool = False, use_ddp: bool = False,
-    rank: int = 0, world_size: int = 1,
+    rank: int = 0, world_size: int = 1, num_workers: int = 4
 ) -> torch.utils.data.DataLoader:
+    
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=shuffle) if use_ddp else None
+    
     return torch.utils.data.DataLoader(
-        dataset=dataset, batch_size=batch_size, shuffle=shuffle and sampler is None,
-        sampler=sampler, drop_last=False,
-        collate_fn=PadCollate_NonMap(gls_vocab=gls_vocab, txt_vocab=txt_vocab),
-        num_workers=4,
+        dataset,
+        batch_size=batch_size,
+        shuffle=(shuffle and not use_ddp),
+        sampler=sampler,
+        collate_fn=PadCollate_NonMap(gls_vocab, txt_vocab, rank=rank),
+        num_workers=num_workers,
+        pin_memory=True,
     )

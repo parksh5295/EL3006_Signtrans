@@ -21,6 +21,7 @@ class Batch:
         txt_lengths: torch.Tensor,
         txt_pad_index: int,
         sequence: List[str],
+        rank: int = 0,
         features: List[torch.Tensor] = None,
         feature_lengths: List[torch.Tensor] = None,
         sgn: torch.Tensor = None,
@@ -39,6 +40,7 @@ class Batch:
         :param txt_lengths: Lengths of text sequences.
         :param txt_pad_index: Padding index for text.
         :param sequence: List of sequence names.
+        :param rank: The GPU device rank for distributed training.
         :param signer: List of signer names (optional).
         """
         self.is_train = is_train
@@ -50,6 +52,7 @@ class Batch:
         self.txt_input = txt_input
         self.txt_lengths = txt_lengths
         self.txt_mask = (self.txt_input != txt_pad_index).unsqueeze(1)
+        self.device = torch.device(f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
         
         self.sequence = sequence
         self.signer = signer
@@ -81,22 +84,22 @@ class Batch:
             self._make_cuda()
 
     def _make_cuda(self):
-        """Move the batch to GPU."""
+        """Move the batch to the designated GPU."""
         if self.features:
-            self.features = [f.cuda() for f in self.features]
-            self.sgn_mask = self.sgn_mask.cuda()
+            self.features = [f.to(self.device) for f in self.features]
+            self.sgn_mask = self.sgn_mask.to(self.device)
         elif self.sgn is not None:
-             self.sgn = self.sgn.cuda()
-             self.sgn_mask = self.sgn_mask.cuda()
+             self.sgn = self.sgn.to(self.device)
+             self.sgn_mask = self.sgn_mask.to(self.device)
 
 
         if self.txt_input is not None:
-            self.txt = self.txt.cuda()
-            self.txt_mask = self.txt_mask.cuda()
-            self.txt_input = self.txt_input.cuda()
+            self.txt = self.txt.to(self.device)
+            self.txt_mask = self.txt_mask.to(self.device)
+            self.txt_input = self.txt_input.to(self.device)
         
         if self.gls is not None:
-            self.gls = self.gls.cuda()
+            self.gls = self.gls.to(self.device)
 
     def sort_by_feature_lengths(self):
         """
@@ -136,7 +139,8 @@ class Batch:
             self.txt_input = self.txt_input[perm_index]
             self.txt_lengths = self.txt_lengths[perm_index]
 
-        if self.use_cuda:
-            self._make_cuda()
+        # No need to call _make_cuda again, as tensors are already on the device.
+        # if self.use_cuda:
+        #     self._make_cuda()
 
         return rev_index
