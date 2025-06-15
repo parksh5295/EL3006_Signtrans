@@ -51,7 +51,8 @@ def load_and_parse_keypoint_file(repo_id: str, filepath: str) -> torch.Tensor:
             kp = person_data.get(key, [])
             frame_keypoints.extend(kp)
             
-        tensor = torch.tensor(frame_keypoints, dtype=torch.float32).reshape(-1, 3)
+        # The tensor should be a flat 1D vector of all keypoint coordinates.
+        tensor = torch.tensor(frame_keypoints, dtype=torch.float32)
 
         KP_CACHE[filepath] = tensor
         return tensor

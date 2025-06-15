@@ -8,8 +8,6 @@ import os
 import shutil
 import time
 from typing import List
-import importlib
-import yaml
 
 import torch
 import torch.distributed as dist
@@ -253,18 +251,9 @@ def train(cfg_file: str) -> None:
 
     helpers.set_seed(seed=cfg["training"].get("random_seed", 42))
     
-    # Dynamic data loading
+    # Load data
     data_cfg = cfg["data"]
-    data_module = importlib.import_module(f"signjoey.{data_module_name}")
-    
     train_data, dev_data, test_data, gls_vocab, txt_vocab = load_data_func(data_cfg=data_cfg)
-
-    # --- DEBUG: Print cfg keys before building model ---
-    if rank == 0:
-        print("\n--- DEBUG: CFG keys before build_model ---")
-        print(sorted(list(cfg.keys())))
-        print("--- END DEBUG ---\n")
-    # --- END DEBUG ---
 
     # Build model
     model = build_model(
