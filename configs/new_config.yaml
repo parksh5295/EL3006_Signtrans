@@ -1,0 +1,111 @@
+# A new, clean configuration for running the SignJoey model.
+# This uses the 'data_nonmap' pipeline which loads Hugging Face keypoints
+# and local CSVs, then merges them in memory without a pre-existing mapping file.
+
+name: "signjoey_nonmap_experiment"
+
+# ==============================================================================
+# Data settings
+# ==============================================================================
+data:
+  # Use the non-mapping data loader
+  data_module: "data_nonmap"
+  
+  # The Hugging Face dataset ID for the keypoints
+  hf_dataset: "how2sign/keypoints-body-2d-split"
+
+  # Root directory for the local CSV annotation files
+  # Please ensure your how2sign_realigned_*.csv files are in this directory.
+  csv_root: "how2sign_data"
+  
+  # Vocabulary files will be created here if they don't exist.
+  gls_vocab: "output/gloss.vocab"
+  txt_vocab: "output/text.vocab"
+  
+  # Column names from the merged dataset
+  sequence_key: "SENTENCE_NAME"
+  gls_key: "GLOSS"
+  txt_key: "TEXT"
+  
+  # The keypoints are under the "data" column in the HF dataset.
+  feature_keys: ["data"]
+
+  level: "word"
+  txt_lowercase: true
+  max_sent_length: 400
+  num_workers: 8 # Adjusted for common setups
+
+# ==============================================================================
+# Training settings
+# ==============================================================================
+training:
+  model_dir: "output/signjoey_model"
+  overwrite: true
+  random_seed: 42
+  
+  shuffle: true
+  epochs: 10
+  batch_size: 16 # Might need adjustment based on GPU memory
+  batch_type: "sentence"
+  
+  scheduler:
+    type: "warmup"
+    warmup_steps: 4000
+  
+  optimizer:
+    betas: [0.9, 0.998]
+    weight_decay: 0.0
+    
+  learning_rate: 0.001
+  learning_rate_min: 1.0e-07
+  clipping_threshold: 1.0
+  
+  label_smoothing: 0.1
+  
+  # Validation and logging frequency
+  validation_freq: 1000
+  logging_freq: 100
+  num_valid_log: 5
+
+# ==============================================================================
+# Model structure settings
+# ==============================================================================
+model:
+  # Specify which tasks the model should perform
+  tasks: ["recognition", "translation"]
+
+  initializer: "xavier"
+  bias_initializer: "zeros"
+  
+  encoder:
+    type: "transformer"
+    num_layers: 6
+    num_heads: 8
+    hidden_size: 512
+    ff_size: 2048
+    dropout: 0.1
+    emb_dropout: 0.1
+
+  decoder:
+    type: "transformer"
+    num_layers: 6
+    num_heads: 8
+    hidden_size: 512
+    ff_size: 2048
+    dropout: 0.1
+    emb_dropout: 0.1
+  
+  embeddings:
+    embedding_dim: 512
+    scale: false
+    dropout: 0.1
+    norm_type: "batch"
+    activation_type: "softsign"
+
+# ==============================================================================
+# Testing (optional)
+# ==============================================================================
+testing:
+    recognition_beam_sizes: [1, 5]
+    translation_beam_sizes: [1, 5]
+    ckpts: ["best.ckpt"] 

@@ -137,7 +137,7 @@ def __tokenize_and_build_vocab(
 
 def load_data(
     data_cfg: dict,
-) -> (Dataset, Dataset, Dataset, SignVocab, TextVocab):
+) -> (Dataset, Dataset, Dataset, GlossVocabulary, TextVocabulary):
     """
     Load data from files, create vocabulary, and prepare datasets.
     This is the original data loading function that relies on mapping.
