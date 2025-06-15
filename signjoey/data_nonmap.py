@@ -53,10 +53,12 @@ def load_and_parse_keypoint_file(repo_id: str, filepath: str) -> torch.Tensor:
             
         tensor = torch.tensor(frame_keypoints, dtype=torch.float32).reshape(-1, 3)
 
-        # --- DEBUG: Print tensor shape and exit ---
-        print(f"\n--- DEBUG: Shape of a single frame tensor: {tensor.shape} ---")
+        # --- DEBUG: Write tensor shape to a file and exit ---
+        with open("debug_tensor_shape.txt", "w") as f:
+            f.write(str(tensor.shape))
         import sys
-        sys.exit("Exiting after checking frame tensor shape. This is intentional.")
+        print("--- DEBUG: Tensor shape written to debug_tensor_shape.txt. Exiting. ---")
+        sys.exit(0)
         # --- END DEBUG ---
 
         KP_CACHE[filepath] = tensor
