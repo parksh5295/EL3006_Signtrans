@@ -79,6 +79,10 @@ model:
   # Specify which tasks the model should perform
   tasks: ["recognition", "translation"]
 
+  # Dimension of the sign language features (e.g., keypoints)
+  # Calculated as: pose(25*3) + hand_left(21*3) + hand_right(21*3) + face(70*3) = 411
+  sgn_dim: 411
+
   initializer: "xavier"
   bias_initializer: "zeros"
   
