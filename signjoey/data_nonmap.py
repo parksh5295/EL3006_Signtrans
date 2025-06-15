@@ -1,122 +1,180 @@
 # coding: utf-8
 """
-Data module for direct text-to-pose processing without complex mapping files.
-This is the new data pipeline.
+Data module for How2Sign, correctly processing remote keypoint archives and local CSVs.
 """
 import os
 import pandas as pd
 from typing import List, Dict, Tuple
+import json
+from tqdm import tqdm
 
 import torch
-from torch.utils.data import Dataset, DataLoader, Sampler
-from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
-from datasets import load_dataset, DatasetDict, concatenate_datasets
-import numpy as np
+from huggingface_hub import hf_hub_download, list_repo_files
 
 from signjoey.vocabulary import GlossVocabulary, TextVocabulary, BOS_TOKEN, PAD_TOKEN
 from signjoey.batch import Batch
 
-def load_data_nonmap(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabulary, TextVocabulary):
+# A cache for downloaded keypoint files to avoid re-downloading during a run.
+# This is a simple in-memory cache. For larger datasets, a disk-based cache might be better.
+KP_CACHE = {}
+
+# Order of keypoints from the 'GloFE' project's GitHub issues
+KEYPOINT_ORDER = [
+    "pose_keypoints_2d",
+    "hand_left_keypoints_2d",
+    "hand_right_keypoints_2d",
+    "face_keypoints_2d",
+]
+
+def load_and_parse_keypoint_file(repo_id: str, filepath: str) -> torch.Tensor:
     """
-    Loads and merges keypoint and annotation data for direct text-to-pose models.
+    Downloads a single keypoint JSON file from the HF Hub, parses it, and returns a tensor.
+    Uses a cache to avoid re-downloading.
     """
-    print("--- Using NEW data loader (data_nonmap.py) ---")
-
-    # 1. Load remote keypoint dataset from Hugging Face
-    print("Loading keypoint data from Hugging Face...")
-    keypoint_ds = load_dataset(data_cfg["hf_keypoint_dataset"], trust_remote_code=True)
-
-    # 2. Load local CSV annotations
-    print("Loading local CSV annotations...")
-    csv_root = data_cfg["csv_root"]
-    train_csv = pd.read_csv(os.path.join(csv_root, "how2sign_realigned_train.csv"), sep='\\t', engine='python')
-    val_csv = pd.read_csv(os.path.join(csv_root, "how2sign_realigned_val.csv"), sep='\\t', engine='python')
-    test_csv = pd.read_csv(os.path.join(csv_root, "how2sign_realigned_test.csv"), sep='\\t', engine='python')
-
-    # Function to prepare and merge a split
-    def prepare_split(hf_split, csv_df):
-        # Normalize keypoint filename to match CSV's SENTENCE_NAME
-        # The __key__ contains the video folder name, e.g., "VIDEO_FOLDER/frame_file.json"
-        # We need to extract just the VIDEO_FOLDER part.
-        hf_split = hf_split.map(lambda x: {"SENTENCE_NAME": x['__key__'].split('/')[0]})
-        
-        # Convert pandas DataFrame to Hugging Face Dataset
-        csv_ds = Dataset.from_pandas(csv_df)
-        
-        # Merge (join) the two datasets on the 'SENTENCE_NAME' column
-        # This adds the SENTENCE and time info to the keypoint data
-        merged_ds = hf_split.map(
-            lambda x: csv_ds.filter(lambda y: y['SENTENCE_NAME'] == x['SENTENCE_NAME'])[0],
-            remove_columns=hf_split.column_names # Keep only columns from the CSV side after lookup
-        )
-        # Manually concatenate the original features back
-        merged_ds = concatenate_datasets([merged_ds, hf_split], axis=1)
-
-        return merged_ds
-
-    print("Preparing and merging splits...")
-    train_data = prepare_split(keypoint_ds['train'], train_csv)
-    dev_data = prepare_split(keypoint_ds['validation'], val_csv)
-    test_data = prepare_split(keypoint_ds['test'], test_csv)
-
-    # 3. Build vocabularies
-    print("Building vocabularies...")
-    txt_key = data_cfg["txt_key"]
-    gls_key = data_cfg["gls_key"]
-
-    txt_vocab = TextVocabulary(tokens=train_data[txt_key], **data_cfg["txt_vocab"])
-    gls_vocab = GlossVocabulary(tokens=train_data[gls_key], **data_cfg["gls_vocab"])
+    if filepath in KP_CACHE:
+        return KP_CACHE[filepath]
     
-    # 4. Create final PyTorch datasets
-    train_dataset = SignTranslationDataset_NonMap(train_data, data_cfg, txt_vocab, gls_vocab)
-    dev_dataset = SignTranslationDataset_NonMap(dev_data, data_cfg, txt_vocab, gls_vocab)
-    test_dataset = SignTranslationDataset_NonMap(test_data, data_cfg, txt_vocab, gls_vocab)
+    try:
+        local_path = hf_hub_download(repo_id=repo_id, filename=filepath, repo_type="dataset")
+        with open(local_path, 'r') as f:
+            data = json.load(f)
+        
+        person_data = data.get("people", [{}])[0]
+        
+        frame_keypoints = []
+        for key in KEYPOINT_ORDER:
+            kp = person_data.get(key, [])
+            frame_keypoints.extend(kp)
+            
+        tensor = torch.tensor(frame_keypoints, dtype=torch.float32).reshape(-1, 3)
+        KP_CACHE[filepath] = tensor
+        return tensor
+        
+    except Exception as e:
+        # print(f"Warning: Could not load or parse {filepath}. Error: {e}")
+        return None
+
+
+def load_data_nonmap(data_cfg: dict) -> Tuple[Dataset, Dataset, Dataset, GlossVocabulary, TextVocabulary]:
+    """
+    Loads data by mapping local CSV annotations to file listings from a Hugging Face Hub repo.
+    """
+    print("--- Starting data loading (nonmap v3: hub file listing) ---")
+    
+    repo_id = data_cfg["hf_keypoint_dataset"]
+    csv_root = data_cfg["csv_root"]
+
+    print(f"Listing files in HF repo: {repo_id}...")
+    try:
+        # This can be slow, but is necessary.
+        repo_files = set(list_repo_files(repo_id, repo_type="dataset"))
+        print(f"Found {len(repo_files)} files in the repo.")
+    except Exception as e:
+        raise IOError(f"Could not list files in Hugging Face Hub repo '{repo_id}'. "
+                      f"Please check repo name and your connection. Error: {e}")
+
+    # Create a mapping from SENTENCE_NAME (video clip) to its frame files
+    print("Creating a map from video clips to frame files...")
+    clip_to_frames_map = {}
+    for filepath in tqdm(repo_files, desc="Mapping repo files"):
+        if filepath.endswith("_keypoints.json"):
+            # e.g., "openpose_output/json/VIDEO_CLIP_NAME/FRAME_FILE.json"
+            parts = filepath.split('/')
+            if len(parts) >= 3:
+                clip_name = parts[2]
+                if clip_name not in clip_to_frames_map:
+                    clip_to_frames_map[clip_name] = []
+                clip_to_frames_map[clip_name].append(filepath)
+    
+    # Sort the frames within each clip chronologically
+    for clip_name in clip_to_frames_map:
+        clip_to_frames_map[clip_name].sort()
+
+    def build_split(split_name: str):
+        """Builds a dataset split by reading a CSV and matching with the file map."""
+        csv_path = os.path.join(csv_root, f"how2sign_realigned_{split_name}.csv")
+        df = pd.read_csv(csv_path, sep='\\t', engine='python')
+        
+        data_list = []
+        print(f"Processing {split_name} split...")
+        for _, row in tqdm(df.iterrows(), total=len(df)):
+            sentence_name = row["SENTENCE_NAME"]
+            if sentence_name in clip_to_frames_map:
+                data_list.append({
+                    "sequence_name": sentence_name,
+                    "text": row["SENTENCE"],
+                    "gloss": row.get("GLOSS", ""), # Handle optional GLOSS column
+                    "frame_files": clip_to_frames_map[sentence_name]
+                })
+        
+        print(f"Matched {len(data_list)} of {len(df)} entries in {split_name}.csv")
+        return data_list
+
+    train_list = build_split("train")
+    dev_list = build_split("val")
+    test_list = build_split("test")
+
+    print("Building vocabularies...")
+    txt_vocab = TextVocabulary(tokens=[d['text'] for d in train_list], **data_cfg["txt_vocab"])
+    gls_vocab = GlossVocabulary(tokens=[d['gloss'] for d in train_list], **data_cfg["gls_vocab"])
+    
+    train_dataset = SignTranslationDataset_NonMap(train_list, repo_id, data_cfg)
+    dev_dataset = SignTranslationDataset_NonMap(dev_list, repo_id, data_cfg)
+    test_dataset = SignTranslationDataset_NonMap(test_list, repo_id, data_cfg)
 
     return train_dataset, dev_dataset, test_dataset, gls_vocab, txt_vocab
 
 
 class SignTranslationDataset_NonMap(Dataset):
     """
-    Dataset for direct text-to-pose translation.
+    A PyTorch Dataset that loads keypoint data frame-by-frame from the HF Hub
+    based on a pre-computed file list.
     """
-    def __init__(self, data: Dataset, data_cfg: dict, txt_vocab: TextVocabulary, gls_vocab: GlossVocabulary):
-        self.data = data
+    def __init__(self, data_list: List[Dict], repo_id: str, data_cfg: dict):
+        self.data_list = data_list
+        self.repo_id = repo_id
         self.data_cfg = data_cfg
-        self.txt_vocab = txt_vocab
-        self.gls_vocab = gls_vocab
         
-        self.sequence_key = data_cfg["sequence_key"]
-        self.gls_key = data_cfg["gls_key"]
-        self.txt_key = data_cfg["txt_key"]
-        self.feature_keys = data_cfg["feature_keys"]
-
     def __len__(self):
-        return len(self.data)
+        return len(self.data_list)
 
     def __getitem__(self, idx: int) -> Dict:
-        entry = self.data[idx]
+        item = self.data_list[idx]
         
-        # Combine all features into a single tensor
-        features = np.concatenate([entry[key] for key in self.feature_keys], axis=-1)
+        frame_tensors = []
+        for frame_file in item["frame_files"]:
+            tensor = load_and_parse_keypoint_file(self.repo_id, frame_file)
+            if tensor is not None:
+                frame_tensors.append(tensor)
         
+        if not frame_tensors:
+            # Return a dummy tensor if no frames could be loaded for this item
+            # This should be handled by the collate function
+            features = torch.zeros((1, 225), dtype=torch.float32) # 75 keypoints * 3 coords
+        else:
+            # Stack all frame tensors to create the full sequence tensor
+            features = torch.stack(frame_tensors, dim=0)
+            
         return {
-            "sequence": entry[self.sequence_key],
-            "gls": entry[self.gls_key],
-            "txt": entry[self.txt_key],
-            "features": torch.from_numpy(features).float(),
+            "sequence": item["sequence_name"],
+            "gls": item["gloss"],
+            "txt": item["text"],
+            "features": features,
         }
 
-
 class PadCollate_NonMap:
-    """
-    Custom collate function to pad sequences for the non-map pipeline.
-    """
     def __init__(self, gls_vocab: GlossVocabulary, txt_vocab: TextVocabulary):
         self.gls_vocab = gls_vocab
         self.txt_vocab = txt_vocab
 
     def __call__(self, batch: List[Dict]) -> Batch:
+        # Filter out items where features might be empty
+        batch = [b for b in batch if b["features"].shape[0] > 1]
+        if not batch:
+            return None # Should not happen in practice if data is clean
+
         sequences = [b["sequence"] for b in batch]
         gls_list = [b["gls"] for b in batch]
         txt_list = [b["txt"] for b in batch]
@@ -132,41 +190,23 @@ class PadCollate_NonMap:
         txt_input[:, 1:] = txt_ids
 
         return Batch(
-            is_train=True,
-            features=[padded_features],
-            feature_lengths=[feature_lengths],
-            sgn=None, sgn_mask=None, sgn_lengths=None, # Not used in this pipeline
-            gls=gls_ids,
-            gls_lengths=gls_lengths,
-            txt=txt_ids,
-            txt_input=txt_input,
-            txt_lengths=txt_lengths,
-            txt_pad_index=self.txt_vocab.stoi[PAD_TOKEN],
-            sequence=sequences,
+            is_train=True, features=[padded_features], feature_lengths=[feature_lengths],
+            sgn=None, sgn_mask=None, sgn_lengths=None, gls=gls_ids, gls_lengths=gls_lengths,
+            txt=txt_ids, txt_input=txt_input, txt_lengths=txt_lengths,
+            txt_pad_index=self.txt_vocab.stoi[PAD_TOKEN], sequence=sequences,
         )
 
-
+# This function remains the same as before
+from torch.utils.data.distributed import DistributedSampler
 def make_data_iter_nonmap(
-    dataset: Dataset,
-    batch_size: int,
-    gls_vocab: GlossVocabulary,
-    txt_vocab: TextVocabulary,
-    shuffle: bool = False,
-    use_ddp: bool = False,
-    rank: int = 0,
-    world_size: int = 1,
-) -> DataLoader:
-    """
-    Creates a data loader for a given dataset for the non-map pipeline.
-    """
+    dataset: Dataset, batch_size: int, gls_vocab: GlossVocabulary,
+    txt_vocab: TextVocabulary, shuffle: bool = False, use_ddp: bool = False,
+    rank: int = 0, world_size: int = 1,
+) -> torch.utils.data.DataLoader:
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=shuffle) if use_ddp else None
-    
-    return DataLoader(
-        dataset=dataset,
-        batch_size=batch_size,
-        shuffle=shuffle and sampler is None,
-        sampler=sampler,
-        drop_last=False,
+    return torch.utils.data.DataLoader(
+        dataset=dataset, batch_size=batch_size, shuffle=shuffle and sampler is None,
+        sampler=sampler, drop_last=False,
         collate_fn=PadCollate_NonMap(gls_vocab=gls_vocab, txt_vocab=txt_vocab),
         num_workers=4,
-    ) 
+    )
