@@ -229,6 +229,11 @@ def ddp_setup():
 
 def train(cfg_file: str) -> None:
     # --- Dynamic Helper Loading for load_config ONLY ---
+    
+    # Construct absolute path to the config file to avoid issues with torchrun's CWD
+    if not os.path.isabs(cfg_file):
+        cfg_file = os.path.join(os.path.dirname(__file__), cfg_file)
+
     print(f"--- [DEBUG] Checking config file: {cfg_file} ---")
     try:
         with open(cfg_file, 'r', encoding="utf-8") as ymlfile:
