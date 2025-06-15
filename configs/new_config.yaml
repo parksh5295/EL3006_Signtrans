@@ -12,7 +12,7 @@ data:
   data_module: "data_nonmap"
   
   # The Hugging Face dataset ID for the keypoints
-  hf_keypoint_dataset: "how2sign/keypoints-body-2d-split"
+  hf_keypoint_dataset: "Saintbook/how2sign_keypoints"
 
   # Root directory for the local CSV annotation files
   # Please ensure your how2sign_realigned_*.csv files are in this directory.
@@ -23,7 +23,7 @@ data:
   txt_vocab: "output/text.vocab"
   
   # Column names from the merged dataset
-  sequence_key: "SENTENCE_NAME"
+  sequence_key: "file_name"
   gls_key: "GLOSS"
   txt_key: "TEXT"
   
