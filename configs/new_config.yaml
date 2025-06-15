@@ -17,7 +17,7 @@ data:
   # Limit the number of dataset items to scan for building the map.
   # This is useful for quick testing on a subset of the data.
   # Set to -1 or remove to scan the entire dataset.
-  dataset_subset_size: 50000
+  dataset_subset_size: 500000
 
   # Root directory for the local CSV annotation files
   # Please ensure your how2sign_realigned_*.csv files are in this directory.
