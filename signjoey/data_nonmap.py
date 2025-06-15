@@ -39,6 +39,7 @@ def load_and_parse_keypoint_file(repo_id: str, filepath: str) -> torch.Tensor:
         return KP_CACHE[filepath]
     
     try:
+        # The filepath here is the full filename including the .json extension
         local_path = hf_hub_download(repo_id=repo_id, filename=filepath, repo_type="dataset")
         with open(local_path, 'r') as f:
             data = json.load(f)
@@ -115,14 +116,16 @@ def load_data_nonmap(data_cfg: dict) -> Tuple[Dataset, Dataset, Dataset, GlossVo
     # We iterate through the dataset to build the map. This might take a moment.
     for item in tqdm(hf_dataset, desc="Scanning dataset stream"):
         key = item.get("__key__")
-        if key and key.endswith("_keypoints.json"):
-            # e.g., "openpose_output/json/VIDEO_CLIP_NAME/FRAME_FILE.json"
+        # The key from the stream does not include the .json extension, so we check for the base name.
+        if key and key.endswith("_keypoints"):
+            # e.g., "openpose_output/json/VIDEO_CLIP_NAME/FRAME_FILE_keypoints"
             parts = key.split('/')
             if len(parts) >= 3:
                 clip_name = parts[2]
                 if clip_name not in clip_to_frames_map:
                     clip_to_frames_map[clip_name] = []
-                clip_to_frames_map[clip_name].append(key)
+                # We need to append the .json extension for the actual download filename
+                clip_to_frames_map[clip_name].append(key + ".json")
     
     if not clip_to_frames_map:
         raise ValueError("Could not find any keypoint files in the dataset stream. "
