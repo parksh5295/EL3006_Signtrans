@@ -7,6 +7,8 @@ import pandas as pd
 from typing import List, Dict, Tuple
 import json
 from tqdm import tqdm
+import datasets  # Import the datasets library
+from collections import Counter
 
 import torch
 from torch.utils.data import Dataset
@@ -59,36 +61,44 @@ def load_and_parse_keypoint_file(repo_id: str, filepath: str) -> torch.Tensor:
 
 def load_data_nonmap(data_cfg: dict) -> Tuple[Dataset, Dataset, Dataset, GlossVocabulary, TextVocabulary]:
     """
-    Loads data by mapping local CSV annotations to file listings from a Hugging Face Hub repo.
+    Loads data by streaming a Hugging Face dataset, mapping keys to local CSV annotations.
     """
-    print("--- Starting data loading (nonmap v3: hub file listing) ---")
+    print("--- Starting data loading (nonmap v4: HF datasets streaming) ---")
     
     repo_id = data_cfg["hf_keypoint_dataset"]
     csv_root = data_cfg["csv_root"]
 
-    print(f"Listing files in HF repo: {repo_id}...")
+    print(f"Streaming dataset from HF Hub: {repo_id}...")
     try:
-        # This can be slow, but is necessary.
-        repo_files = set(list_repo_files(repo_id, repo_type="dataset"))
-        print(f"Found {len(repo_files)} files in the repo.")
+        # Load the dataset in streaming mode to avoid downloading everything at once.
+        hf_dataset = datasets.load_dataset(repo_id, streaming=True, split="train")
+        print("Successfully started streaming.")
     except Exception as e:
-        raise IOError(f"Could not list files in Hugging Face Hub repo '{repo_id}'. "
+        raise IOError(f"Could not load or stream dataset '{repo_id}' from Hugging Face Hub. "
                       f"Please check repo name and your connection. Error: {e}")
 
-    # Create a mapping from SENTENCE_NAME (video clip) to its frame files
-    print("Creating a map from video clips to frame files...")
+    # Create a mapping from SENTENCE_NAME (video clip) to its frame file keys (__key__)
+    print("Creating a map from video clips to frame files from the dataset stream...")
     clip_to_frames_map = {}
-    for filepath in tqdm(repo_files, desc="Mapping repo files"):
-        if filepath.endswith("_keypoints.json"):
+    # We iterate through the dataset to build the map. This might take a moment.
+    for item in tqdm(hf_dataset, desc="Scanning dataset stream"):
+        key = item.get("__key__")
+        if key and key.endswith("_keypoints.json"):
             # e.g., "openpose_output/json/VIDEO_CLIP_NAME/FRAME_FILE.json"
-            parts = filepath.split('/')
+            parts = key.split('/')
             if len(parts) >= 3:
                 clip_name = parts[2]
                 if clip_name not in clip_to_frames_map:
                     clip_to_frames_map[clip_name] = []
-                clip_to_frames_map[clip_name].append(filepath)
+                clip_to_frames_map[clip_name].append(key)
     
-    # Sort the frames within each clip chronologically
+    if not clip_to_frames_map:
+        raise ValueError("Could not find any keypoint files in the dataset stream. "
+                         "Please check the dataset structure and the `__key__` field.")
+
+    print(f"Mapped {len(clip_to_frames_map)} unique video clips.")
+
+    # Sort the frames within each clip chronologically based on the filename in the key
     for clip_name in clip_to_frames_map:
         clip_to_frames_map[clip_name].sort()
 
@@ -97,12 +107,6 @@ def load_data_nonmap(data_cfg: dict) -> Tuple[Dataset, Dataset, Dataset, GlossVo
         csv_path = os.path.join(csv_root, f"how2sign_realigned_{split_name}.csv")
         df = pd.read_csv(csv_path, sep='\\t', engine='python')
         
-        # --- DEBUGGING: Print first CSV name and some map keys ---
-        if not df.empty and clip_to_frames_map:
-            print(f"[DEBUG] First SENTENCE_NAME from {split_name}.csv: '{df.iloc[0]['SENTENCE_NAME']}'")
-            print(f"[DEBUG] First 5 clip names from HF repo map: {list(clip_to_frames_map.keys())[:5]}")
-        # --- END DEBUGGING ---
-
         data_list = []
         print(f"Processing {split_name} split...")
         for _, row in tqdm(df.iterrows(), total=len(df)):
@@ -111,20 +115,54 @@ def load_data_nonmap(data_cfg: dict) -> Tuple[Dataset, Dataset, Dataset, GlossVo
                 data_list.append({
                     "sequence_name": sentence_name,
                     "text": row["SENTENCE"],
-                    "gloss": row.get("GLOSS", ""), # Handle optional GLOSS column
+                    "gloss": row.get("GLOSS", ""),
                     "frame_files": clip_to_frames_map[sentence_name]
                 })
         
-        print(f"Matched {len(data_list)} of {len(df)} entries in {split_name}.csv")
+        print(f"Matched {len(data_list)} of {len(df)} entries in {os.path.basename(csv_path)}")
+        if len(data_list) == 0 and len(df) > 0:
+            print(f"WARNING: No matches found for split '{split_name}'. The vocabulary might be incomplete "
+                  f"and this split will be empty. Check for mismatches between CSV SENTENCE_NAMEs "
+                  f"and clip names in the HF dataset (e.g., '{next(iter(clip_to_frames_map.keys()))}')")
         return data_list
 
     train_list = build_split("train")
     dev_list = build_split("val")
     test_list = build_split("test")
 
+    if not train_list:
+        raise ValueError("The training data list is empty. Vocabulary cannot be built. "
+                         "Please check the matching logic and data files.")
+
     print("Building vocabularies...")
-    txt_vocab = TextVocabulary(tokens=[d['text'] for d in train_list], **data_cfg["txt_vocab"])
-    gls_vocab = GlossVocabulary(tokens=[d['gloss'] for d in train_list], **data_cfg["gls_vocab"])
+
+    def build_vocab_from_list(data: List[Dict], field: str, cfg: Dict) -> List[str]:
+        """Tokenizes and builds a vocabulary from a list of data dictionaries."""
+        counter = Counter()
+        for item in data:
+            tokens = item[field].lower().split() if field == 'text' else item[field].split()
+            counter.update(tokens)
+        
+        # Filter by minimum frequency
+        if "min_freq" in cfg:
+            min_freq = cfg["min_freq"]
+            counter = Counter({t: c for t, c in counter.items() if c >= min_freq})
+        
+        # Sort by frequency, then alphabetically
+        sorted_tokens = sorted(counter.keys(), key=lambda t: (-counter[t], t))
+        
+        # Cut to max size
+        if "max_size" in cfg:
+            max_size = cfg["max_size"]
+            sorted_tokens = sorted_tokens[:max_size]
+            
+        return sorted_tokens
+
+    txt_tokens = build_vocab_from_list(train_list, 'text', data_cfg["txt_vocab"])
+    gls_tokens = build_vocab_from_list(train_list, 'gloss', data_cfg["gls_vocab"])
+
+    txt_vocab = TextVocabulary(tokens=txt_tokens)
+    gls_vocab = GlossVocabulary(tokens=gls_tokens)
     
     train_dataset = SignTranslationDataset_NonMap(train_list, repo_id, data_cfg)
     dev_dataset = SignTranslationDataset_NonMap(dev_list, repo_id, data_cfg)

@@ -434,8 +434,8 @@ def build_model(
         sgn_embed = SpatialEmbeddings(
             **sgn_embed_cfg,
             num_heads=encoder_cfg["num_heads"],
-            input_size=sgn_dim,
-        )
+        input_size=sgn_dim,
+    )
 
     # Build Encoder
     enc_dropout = encoder_cfg.get("dropout", 0.0)
@@ -452,7 +452,6 @@ def build_model(
         encoder_cfg = encoder_cfg.copy()
         encoder_cfg.pop("emb_dropout", None)
         encoder_cfg.pop("dropout", None)
-        
         encoder = TransformerEncoder(
             **encoder_cfg,
             emb_dropout=enc_emb_dropout,
@@ -497,7 +496,7 @@ def build_model(
     # Spoken Language Embeddings
     txt_embed: Embeddings = Embeddings(
         **model_cfg["embeddings"],
-        vocab_size=len(txt_vocab),
+                vocab_size=len(txt_vocab),
         padding_idx=txt_vocab.stoi[PAD_TOKEN],
     )
 
