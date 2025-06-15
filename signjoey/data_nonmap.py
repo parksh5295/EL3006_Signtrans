@@ -78,32 +78,6 @@ def load_data_nonmap(data_cfg: dict) -> Tuple[Dataset, Dataset, Dataset, GlossVo
         raise IOError(f"Could not load or stream dataset '{repo_id}' from Hugging Face Hub. "
                       f"Please check repo name and your connection. Error: {e}")
 
-    # --- DEBUGGING: Inspect the first item to see its structure ---
-    print("\n\n--- DATASET ITEM DEBUG ---")
-    try:
-        first_item = next(iter(hf_dataset))
-        print(f"Keys of the first item: {list(first_item.keys())}")
-        print("Content of the first item:")
-        for key, value in first_item.items():
-            # Avoid printing potentially large binary/byte content directly
-            if isinstance(value, bytes):
-                print(f"  '{key}': <bytes of length {len(value)}>")
-            else:
-                # Truncate long strings for readability
-                value_repr = repr(value)
-                if len(value_repr) > 150:
-                    value_repr = value_repr[:150] + "..."
-                print(f"  '{key}': {value_repr}")
-        print("--- END DEBUG --- \n\n")
-    except StopIteration:
-        print("--- DEBUG: The dataset stream appears to be empty. ---")
-    except Exception as e:
-        print(f"--- DEBUG: An error occurred while inspecting the first item: {e} ---")
-    
-    import sys
-    sys.exit("Exiting after inspecting the first dataset item. This is intentional for debugging.")
-    # --- END DEBUGGING ---
-
     # --- Limit dataset size for quick testing ---
     subset_size = data_cfg.get("dataset_subset_size", -1)
     if subset_size > 0:
