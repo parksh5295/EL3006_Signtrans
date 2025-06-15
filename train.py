@@ -229,16 +229,21 @@ def ddp_setup():
 
 def train(cfg_file: str) -> None:
     # --- Dynamic Helper Loading for load_config ONLY ---
+    print(f"--- [DEBUG] Checking config file: {cfg_file} ---")
     try:
         with open(cfg_file, 'r', encoding="utf-8") as ymlfile:
             temp_cfg = yaml.safe_load(ymlfile)
         data_module_name = temp_cfg.get("data", {}).get("data_module", "data_nonmap")
-    except Exception:
+        print(f"--- [DEBUG] Found 'data_module': {data_module_name} ---")
+    except Exception as e:
+        print(f"--- [DEBUG] Pre-parsing config failed: {e} ---")
         data_module_name = "data" 
 
     if data_module_name == "data_nonmap":
+        print("--- [DEBUG] Using 'signjoey.helpers_nonmap' ---")
         helpers = importlib.import_module("signjoey.helpers_nonmap")
     else:
+        print("--- [DEBUG] Using 'signjoey.helpers' ---")
         helpers = importlib.import_module("signjoey.helpers")
     
     cfg = helpers.load_config(cfg_file)
