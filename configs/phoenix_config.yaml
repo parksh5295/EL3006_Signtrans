@@ -1,0 +1,90 @@
+# PHOENIX-2014T Dataset specific configuration
+name: "phoenix_transformer"
+data:
+    # This key tells train.py to use the new data_phoenix.py module
+    data_module: "data_phoenix"
+    data_path: "data/" # Directory where the .pami0 files are located
+    train: "phoenix14t.pami0.train"
+    dev: "phoenix14t.pami0.dev"
+    test: "phoenix14t.pami0.test"
+    
+    # Feature size should match the data in the .pami0 files
+    feature_size: 1024 
+    level: "char" # or "word"
+    
+    # Vocabulary settings
+    gls_vocab:
+        min_freq: 1
+    txt_vocab:
+        min_freq: 1
+
+    # Data keys from the .pami0 files
+    gls_key: "gloss"
+    txt_key: "text"
+    sequence_key: "name" # The key for the sequence identifier
+
+model:
+    # Transformer settings - can be adjusted
+    initializer: "xavier"
+    embed_init_gain: 1.0
+    init_fn: "uniform"
+    bias_initializer: "zeros"
+    ff_layer: "linear"
+    
+    encoder:
+        type: "transformer"
+        num_layers: 3
+        num_heads: 8
+        hidden_size: 512
+        ff_size: 2048
+        dropout: 0.1
+    decoder:
+        type: "transformer"
+        num_layers: 3
+        num_heads: 8
+        hidden_size: 512
+        ff_size: 2048
+        dropout: 0.1
+    
+    embeddings:
+        hidden_size: 512
+        dropout: 0.1
+        type: "learned"
+
+training:
+    # Training settings
+    reset_best_ckpt: False
+    reset_scheduler: False
+    reset_optimizer: False
+    random_seed: 42
+    
+    # Optimizer
+    optimizer: "adam"
+    learning_rate: 0.001
+    learning_rate_min: 0.00001
+    weight_decay: 0.001
+    clip_grad_val: 1.0
+    
+    # Scheduler
+    scheduler: "plateau"
+    patience: 5
+    decrease_factor: 0.5
+    
+    # Batch & Epochs
+    batch_size: 32
+    num_workers: 4
+    epochs: 100
+    
+    # Early stopping
+    early_stopping_metric: "eval_metric"
+    early_stopping_patience: 10
+    
+    # Checkpoint settings
+    model_dir: "models/phoenix_transformer"
+    load_model: "" # Path to a checkpoint to load
+
+testing:
+    # Testing settings
+    recognition_beam_sizes: [1, 2, 3, 4, 5]
+    translation_beam_sizes: [1, 2, 3, 4, 5]
+    translation_beam_alphas: [-1, 0, 1] 
