@@ -222,25 +222,21 @@ def ddp_setup():
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
 def train(cfg_file: str) -> None:
-    # --- Dynamic Helper Loading ---
-    # Construct absolute path to the config file to avoid issues with torchrun's CWD
-    if not os.path.isabs(cfg_file):
-        cfg_file = os.path.join(os.path.dirname(__file__), cfg_file)
-        
-    try:
-        with open(cfg_file, 'r', encoding="utf-8") as ymlfile:
-            temp_cfg = yaml.safe_load(ymlfile)
-        data_module_name = temp_cfg.get("data", {}).get("data_module", "data_nonmap")
-    except Exception:
-        data_module_name = "data" 
-
-    if data_module_name == "data_nonmap":
-        helpers = importlib.import_module("signjoey.helpers_nonmap")
-    else:
-        helpers = importlib.import_module("signjoey.helpers")
+    # --- Always use the unified helpers module ---
+    from signjoey import helpers
+    from signjoey.data import load_data, make_data_iter
+    from signjoey.data_nonmap import load_data_nonmap, make_data_iter_nonmap
     
     cfg = helpers.load_config(cfg_file)
-    # --- End Dynamic Helper Loading ---
+    
+    # Determine which data loading function to use
+    data_module_name = cfg["data"].get("data_module", "data")
+    if data_module_name == "data_nonmap":
+        load_data_func = load_data_nonmap
+        make_data_iter_func = make_data_iter_nonmap
+    else:
+        load_data_func = load_data
+        make_data_iter_func = make_data_iter
 
     rank, world_size = 0, 1
     if "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1:
@@ -260,9 +256,6 @@ def train(cfg_file: str) -> None:
     # Dynamic data loading
     data_cfg = cfg["data"]
     data_module = importlib.import_module(f"signjoey.{data_module_name}")
-    
-    load_data_func = getattr(data_module, 'load_data_nonmap' if data_module_name == 'data_nonmap' else 'load_data')
-    make_data_iter_func = getattr(data_module, 'make_data_iter_nonmap' if data_module_name == 'data_nonmap' else 'make_data_iter')
     
     train_data, dev_data, test_data, gls_vocab, txt_vocab = load_data_func(data_cfg=data_cfg)
 
