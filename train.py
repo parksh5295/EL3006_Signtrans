@@ -268,7 +268,8 @@ def train(cfg_file: str) -> None:
     model.to(device)
 
     if world_size > 1:
-        model = DDP(model, device_ids=[int(os.environ["LOCAL_RANK"])], find_unused_parameters=True)
+        model.to(rank)  # Move model to the correct GPU before DDP setup
+        model = DDP(model, device_ids=[rank], find_unused_parameters=True)
 
     # Trainer
     trainer = TrainManager(model=model, config=cfg, helpers=helpers, rank=rank, world_size=world_size)
