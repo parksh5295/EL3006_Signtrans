@@ -69,7 +69,7 @@ def load_data_nonmap(data_cfg: dict) -> Tuple[Dataset, Dataset, Dataset, None, N
     # --- Create a comprehensive map from ALL splits ---
     clip_to_frames_map = defaultdict(list)
     
-    for split in ["train", "val", "test"]:
+    for split in ["train", "validation", "test"]:
         print(f"Scanning '{split}' split for video clips...")
         try:
             hf_dataset = datasets.load_dataset(repo_id, streaming=True, split=split)
