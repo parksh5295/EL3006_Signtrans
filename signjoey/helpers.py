@@ -175,3 +175,69 @@ def freeze_params(module: nn.Module):
     """
     for _, p in module.named_parameters():
         p.requires_grad = False
+
+def tile(x: Tensor, count: int, dim: int = 0) -> Tensor:
+    """
+    Tiles a tensor along a specified dimension.
+    From OpenNMT-py's codebase.
+    """
+    if isinstance(x, tuple):
+        return tuple(tile(t, count, dim=dim) for t in x)
+
+    perm = list(range(len(x.size())))
+    if dim != 0:
+        perm[0], perm[dim] = perm[dim], perm[0]
+        x = x.permute(perm).contiguous()
+        
+    out_size = list(x.size())
+    out_size[0] *= count
+    batch = x.size(0)
+    
+    x = x.view(batch, -1).transpose(0, 1).repeat(count, 1)
+    x = x.transpose(0, 1).contiguous().view(*out_size)
+    
+    if dim != 0:
+        x = x.permute(perm).contiguous()
+        
+    return x
+
+def symlink_update(target: str, link_name: str) -> None:
+    """
+    Create or update a symlink.
+    """
+    if os.path.lexists(link_name):
+        os.remove(link_name)
+    os.symlink(target, link_name)
+
+def bpe_postprocess(string: str) -> str:
+    """
+    Post-processor for BPE output.
+    Recombines BPE pieces and removes spaces before punctuation.
+    """
+    # pylint: disable=anomalous-backslash-in-string
+    return string.replace("@@ ", "").replace("@@", "").replace(" ##", "").replace("##", "")
+
+def log_data_info(
+    train_data: "SignTranslationDataset",
+    valid_data: "SignTranslationDataset",
+    test_data: "SignTranslationDataset",
+    gls_vocab: GlossVocabulary,
+    txt_vocab: TextVocabulary,
+    logging_function: Callable,
+):
+    """
+    Log basic information about loaded data.
+    """
+    logging_function("Data loaded.")
+    logging_function(
+        "Train Sentences: %d",
+        len(train_data) if train_data is not None else 0,
+    )
+    logging_function(
+        "Dev Sentences: %d", len(valid_data) if valid_data is not None else 0
+    )
+    logging_function(
+        "Test Sentences: %d", len(test_data) if test_data is not None else 0
+    )
+    logging_function("Gloss Vocab (Train): %d", len(gls_vocab))
+    logging_function("Text Vocab (Train): %d", len(txt_vocab))
