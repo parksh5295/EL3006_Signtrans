@@ -9,6 +9,7 @@ import shutil
 import time
 from typing import List
 import importlib
+import yaml
 
 import torch
 import torch.distributed as dist
@@ -19,13 +20,11 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from signjoey.model import SignModel, build_model
 from signjoey.batch import Batch
 from signjoey.helpers import (
-    log_data_info,
-    load_config,
-    log_cfg,
-    load_checkpoint,
     make_model_dir,
     make_logger,
     set_seed,
+    log_cfg,
+    load_checkpoint,
 )
 from signjoey.vocabulary import (
     PAD_TOKEN,
@@ -229,7 +228,21 @@ def ddp_setup():
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
 def train(cfg_file: str) -> None:
-    cfg = load_config(cfg_file)
+    # --- Dynamic Helper Loading for load_config ONLY ---
+    try:
+        with open(cfg_file, 'r', encoding="utf-8") as ymlfile:
+            temp_cfg = yaml.safe_load(ymlfile)
+        data_module_name = temp_cfg.get("data", {}).get("data_module", "data_nonmap")
+    except Exception:
+        data_module_name = "data" 
+
+    if data_module_name == "data_nonmap":
+        helpers = importlib.import_module("signjoey.helpers_nonmap")
+    else:
+        helpers = importlib.import_module("signjoey.helpers")
+    
+    cfg = helpers.load_config(cfg_file)
+    # --- End Dynamic Helper Loading ---
 
     rank, world_size = 0, 1
     if "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1:
@@ -240,11 +253,11 @@ def train(cfg_file: str) -> None:
     model_dir = make_model_dir(
         cfg["training"]["model_dir"], overwrite=cfg["training"].get("overwrite", False), rank=rank
     )
-    make_logger(model_dir, mode="train", rank=rank)
+    logger = make_logger(model_dir, mode="train", rank=rank)
     if rank == 0:
-        log_cfg(cfg)
+        log_cfg(cfg, logger)
 
-    set_seed(seed=cfg["training"].get("random_seed", 42))
+    set_seed(seed=cfg["training"]["get"]("random_seed", 42))
     
     # Dynamic data loading
     data_cfg = cfg["data"]
@@ -282,7 +295,7 @@ def train(cfg_file: str) -> None:
 
     # Load checkpoint
     if cfg["training"].get("load_model"):
-        load_checkpoint(cfg["training"]["load_model"], model, trainer.optimizer)
+        load_checkpoint(cfg["training"]["load_model"], trainer.model, trainer.optimizer)
 
     trainer.train_and_validate(train_data, dev_data, make_data_iter_func)
 
