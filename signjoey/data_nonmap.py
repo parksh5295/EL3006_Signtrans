@@ -97,6 +97,12 @@ def load_data_nonmap(data_cfg: dict) -> Tuple[Dataset, Dataset, Dataset, GlossVo
         csv_path = os.path.join(csv_root, f"how2sign_realigned_{split_name}.csv")
         df = pd.read_csv(csv_path, sep='\\t', engine='python')
         
+        # --- DEBUGGING: Print first CSV name and some map keys ---
+        if not df.empty and clip_to_frames_map:
+            print(f"[DEBUG] First SENTENCE_NAME from {split_name}.csv: '{df.iloc[0]['SENTENCE_NAME']}'")
+            print(f"[DEBUG] First 5 clip names from HF repo map: {list(clip_to_frames_map.keys())[:5]}")
+        # --- END DEBUGGING ---
+
         data_list = []
         print(f"Processing {split_name} split...")
         for _, row in tqdm(df.iterrows(), total=len(df)):
