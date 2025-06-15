@@ -19,33 +19,24 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from signjoey.model import SignModel, build_model
 from signjoey.batch import Batch
-from signjoey.helpers import (
-    make_model_dir,
-    make_logger,
-    set_seed,
-    log_cfg,
-    load_checkpoint,
-)
 from signjoey.vocabulary import (
     PAD_TOKEN,
     GlossVocabulary,
     TextVocabulary,
-    build_vocab,
 )
 from signjoey.loss import XentLoss
-from signjoey.prediction import validate_on_data
 from signjoey.scheduler import Scheduler, PyTorchScheduler, SignJoeyScheduler
-from signjoey.metrics import wer_single
+
 
 # This is the TrainManager from signjoey/train.py.
-# I'm putting it here to make this a single, self-contained training script.
+# It's embedded here to make this a single, self-contained training script.
 # pylint: disable=too-many-instance-attributes
 class TrainManager:
     """
     Manages training loop, checks checkpoints, logs training progress.
     """
 
-    def __init__(self, model: SignModel, config: dict, rank: int = 0, world_size: int = 1) -> None:
+    def __init__(self, model: SignModel, config: dict, helpers, rank: int = 0, world_size: int = 1) -> None:
         """
         Creates a new TrainManager for a model, specified as in configuration.
         """
@@ -53,6 +44,7 @@ class TrainManager:
 
         self.config = config
         self.model = model
+        self.helpers = helpers
         self.rank = rank
         self.world_size = world_size
         self.is_main_process = self.rank == 0
@@ -70,15 +62,10 @@ class TrainManager:
         self.epochs = train_config["epochs"]
         self.batch_size = train_config["batch_size"]
         self.batch_type = train_config.get("batch_type", "sentence")
-        self.batch_multiplier = train_config.get("batch_multiplier", 1)
         
         self.validation_freq = train_config.get("validation_freq", 1000)
         self.logging_freq = train_config.get("logging_freq", 100)
-        self.num_valid_log = train_config.get("num_valid_log", 5) if self.is_main_process else 0
         self.num_workers = config["data"].get("num_workers", 4)
-        
-        self.fp16 = train_config.get("fp16", False)
-        self.scaler = torch.cuda.amp.GradScaler() if self.fp16 else None
         
         self.step = 0
         self.epoch = 0
@@ -91,7 +78,7 @@ class TrainManager:
         if self.is_main_process:
             self.valid_report_file = f"{self.model_dir}/validations.txt"
         
-        self.loss = self._build_loss(train_config)
+        self.loss = {}
 
 
     def _build_scheduler(self, train_config):
@@ -114,7 +101,7 @@ class TrainManager:
             scheduler = SignJoeyScheduler(
                 optimizer=opt,
                 hidden_size=model_size,
-                k=scheduler_config["k"],
+                k=scheduler_config.get("k", 1.0),
                 warmup_steps=scheduler_config["warmup_steps"],
             )
         else:  # "fixed"
@@ -144,19 +131,22 @@ class TrainManager:
         self.model.train()
         
         total_loss = 0
-        rec_loss, trans_loss = 0, 0
         
-        if self.loss["recognition"] is not None:
+        # get recognition loss
+        if self.loss.get("recognition") is not None:
             rec_loss, _ = self.model.get_loss_for_batch(batch, self.loss["recognition"], None, 1.0, 0.0)
             total_loss += rec_loss
             if self.is_main_process: self.tensorboard_writer.add_scalar("train/recognition_loss", rec_loss.item(), self.step)
 
-        if self.loss["translation"] is not None:
+        # get translation loss
+        if self.loss.get("translation") is not None:
              _, trans_loss = self.model.get_loss_for_batch(batch, None, self.loss["translation"], 0.0, 1.0)
              total_loss += trans_loss
              if self.is_main_process: self.tensorboard_writer.add_scalar("train/translation_loss", trans_loss.item(), self.step)
 
-        if self.is_main_process: self.tensorboard_writer.add_scalar("train/total_loss", total_loss.item(), self.step)
+        if self.is_main_process: 
+            self.tensorboard_writer.add_scalar("train/total_loss", total_loss.item(), self.step)
+            self.tensorboard_writer.add_scalar("train/learning_rate", self.optimizer.param_groups[0]['lr'], self.step)
 
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
@@ -172,6 +162,7 @@ class TrainManager:
         train_iter, _ = make_data_iter_func(
             dataset=self.train_data,
             batch_size=self.batch_size,
+            batch_type=self.batch_type,
             gls_vocab=self.gls_vocab,
             txt_vocab=self.txt_vocab,
             shuffle=self.shuffle,
@@ -183,6 +174,9 @@ class TrainManager:
         for epoch_no in range(self.epochs):
             self.epoch = epoch_no
             self.logger.info("EPOCH %d", epoch_no + 1)
+            
+            if self.world_size > 1 and hasattr(train_iter.sampler, 'set_epoch'):
+                train_iter.sampler.set_epoch(epoch_no)
             
             for i, batch in enumerate(iter(train_iter)):
                 self.step += 1
@@ -202,7 +196,7 @@ class TrainManager:
                 self._save_checkpoint(name="latest")
 
     def _validate(self, dev_data):
-        # TODO: Validation logic from signjoey/train.py
+        # Placeholder for validation logic
         self.logger.info("Validation step (not implemented).")
         pass
         
@@ -228,27 +222,21 @@ def ddp_setup():
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
 def train(cfg_file: str) -> None:
-    # --- Dynamic Helper Loading for load_config ONLY ---
-    
+    # --- Dynamic Helper Loading ---
     # Construct absolute path to the config file to avoid issues with torchrun's CWD
     if not os.path.isabs(cfg_file):
         cfg_file = os.path.join(os.path.dirname(__file__), cfg_file)
-
-    print(f"--- [DEBUG] Checking config file: {cfg_file} ---")
+        
     try:
         with open(cfg_file, 'r', encoding="utf-8") as ymlfile:
             temp_cfg = yaml.safe_load(ymlfile)
         data_module_name = temp_cfg.get("data", {}).get("data_module", "data_nonmap")
-        print(f"--- [DEBUG] Found 'data_module': {data_module_name} ---")
-    except Exception as e:
-        print(f"--- [DEBUG] Pre-parsing config failed: {e} ---")
+    except Exception:
         data_module_name = "data" 
 
     if data_module_name == "data_nonmap":
-        print("--- [DEBUG] Using 'signjoey.helpers_nonmap' ---")
         helpers = importlib.import_module("signjoey.helpers_nonmap")
     else:
-        print("--- [DEBUG] Using 'signjoey.helpers' ---")
         helpers = importlib.import_module("signjoey.helpers")
     
     cfg = helpers.load_config(cfg_file)
@@ -260,19 +248,17 @@ def train(cfg_file: str) -> None:
         rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
 
-    model_dir = make_model_dir(
+    model_dir = helpers.make_model_dir(
         cfg["training"]["model_dir"], overwrite=cfg["training"].get("overwrite", False), rank=rank
     )
-    logger = make_logger(model_dir, mode="train", rank=rank)
+    logger = helpers.make_logger(model_dir, mode="train", rank=rank)
     if rank == 0:
-        log_cfg(cfg, logger)
+        helpers.log_cfg(cfg, logger)
 
-    set_seed(seed=cfg["training"]["get"]("random_seed", 42))
+    helpers.set_seed(seed=cfg["training"].get("random_seed", 42))
     
     # Dynamic data loading
     data_cfg = cfg["data"]
-    data_module_name = data_cfg.get("data_module", "data_nonmap")
-    if rank == 0: print(f"Using data module: {data_module_name}")
     data_module = importlib.import_module(f"signjoey.{data_module_name}")
     
     load_data_func = getattr(data_module, 'load_data_nonmap' if data_module_name == 'data_nonmap' else 'load_data')
@@ -293,25 +279,24 @@ def train(cfg_file: str) -> None:
     model.to(device)
 
     if world_size > 1:
-        model = DDP(model, device_ids=[int(os.environ["LOCAL_RANK"])])
+        model = DDP(model, device_ids=[int(os.environ["LOCAL_RANK"])], find_unused_parameters=True)
 
     # Trainer
-    trainer = TrainManager(model=model, config=cfg, rank=rank, world_size=world_size)
+    trainer = TrainManager(model=model, config=cfg, helpers=helpers, rank=rank, world_size=world_size)
     trainer.gls_vocab = gls_vocab
     trainer.txt_vocab = txt_vocab
     
     # Re-build loss function with correct vocab
-    trainer.loss = trainer._build_loss(cfg)
+    trainer.loss = trainer._build_loss(cfg["training"])
 
     # Load checkpoint
     if cfg["training"].get("load_model"):
-        load_checkpoint(cfg["training"]["load_model"], trainer.model, trainer.optimizer)
+        helpers.load_checkpoint(cfg["training"]["load_model"], trainer.model, trainer.optimizer)
 
     trainer.train_and_validate(train_data, dev_data, make_data_iter_func)
 
     if test_data is not None and rank == 0:
-        # TODO: Testing logic
-        trainer.logger.info("Testing not implemented.")
+        logger.info("Testing not implemented.")
         pass
 
     if world_size > 1:
@@ -320,6 +305,6 @@ def train(cfg_file: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("SignJoey")
-    parser.add_argument("config", default="configs/default.yaml", type=str, nargs="?", help="Training config file.")
+    parser.add_argument("config", default="configs/new_config.yaml", type=str, nargs="?", help="Training config file.")
     args = parser.parse_args()
-    train(cfg_file=args.config) 
+    train(cfg_file=args.config)
