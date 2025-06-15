@@ -37,7 +37,9 @@ def load_data_nonmap(data_cfg: dict) -> (Dataset, Dataset, Dataset, GlossVocabul
     # Function to prepare and merge a split
     def prepare_split(hf_split, csv_df):
         # Normalize keypoint filename to match CSV's SENTENCE_NAME
-        hf_split = hf_split.map(lambda x: {"SENTENCE_NAME": x['file_name'].replace('.npy', '')})
+        # The __key__ contains the video folder name, e.g., "VIDEO_FOLDER/frame_file.json"
+        # We need to extract just the VIDEO_FOLDER part.
+        hf_split = hf_split.map(lambda x: {"SENTENCE_NAME": x['__key__'].split('/')[0]})
         
         # Convert pandas DataFrame to Hugging Face Dataset
         csv_ds = Dataset.from_pandas(csv_df)
