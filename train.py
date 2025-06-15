@@ -259,9 +259,16 @@ def train(cfg_file: str) -> None:
     
     train_data, dev_data, test_data, gls_vocab, txt_vocab = load_data_func(data_cfg=data_cfg)
 
+    # --- DEBUG: Print cfg keys before building model ---
+    if rank == 0:
+        print("\n--- DEBUG: CFG keys before build_model ---")
+        print(sorted(list(cfg.keys())))
+        print("--- END DEBUG ---\n")
+    # --- END DEBUG ---
+
     # Build model
     model = build_model(
-        cfg=cfg["model"],
+        cfg=cfg,
         gls_vocab=gls_vocab,
         txt_vocab=txt_vocab,
     )
