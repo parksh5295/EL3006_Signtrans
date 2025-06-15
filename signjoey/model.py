@@ -1,7 +1,7 @@
 # coding: utf-8
-import tensorflow as tf
+# import tensorflow as tf
 
-tf.config.set_visible_devices([], "GPU")
+# tf.config.set_visible_devices([], "GPU")
 
 import numpy as np
 import torch.nn as nn
@@ -265,6 +265,7 @@ class SignModel(nn.Module):
 
         return recognition_loss, translation_loss
 
+
     def run_batch(
         self,
         batch: Batch,
@@ -278,90 +279,99 @@ class SignModel(nn.Module):
 
         :param batch: batch to generate hypotheses for
         :param recognition_beam_size: size of the beam for CTC beam search
-            if 1 use greedy
+            if 1, greedy decoding is applied
         :param translation_beam_size: size of the beam for translation beam search
-            if 1 use greedy
-        :param translation_beam_alpha: alpha value for beam search
-        :param translation_max_output_length: maximum length of translation hypotheses
-        :return: stacked_output: hypotheses for batch,
-            stacked_attention_scores: attention scores for batch
+            if 1, greedy decoding is applied
+        :param translation_beam_alpha: alpha value for length penalty
+        :param translation_max_output_length: maximum length for translation hypotheses
+        :return:
+            - gloss_hypotheses: an array of post-processed gloss hypotheses
+            - text_hypotheses: an array of post-processed translation hypotheses
+            - attention_scores: an array of attention scores
         """
+        encoder_output, encoder_hidden = self.encode(
+            features=batch.features,
+            feature_lengths=batch.feature_lengths,
+            sgn_mask=batch.sgn_mask,
+        )
 
+        # Gloss Recognition
         if self.do_recognition:
-            # Gloss Recognition Part
-            encoder_output, encoder_hidden = self.encode(
-                sgn=batch.sgn,
-                sgn_mask=batch.sgn_mask,
-                sgn_length=batch.sgn_lengths,
-                features=batch.features,
-                feature_lengths=batch.feature_lengths,
-            )
-            # N x T x C
+            # TF-based beam search requires a batch of size 1
+            # assert batch.sgn.size(0) == 1, "Currently, only batch_size=1 for CTC is supported."
+
             gloss_scores = self.gloss_output_layer(encoder_output)
-            # N x T x C
             gloss_probabilities = gloss_scores.log_softmax(2)
-            # Turn it into T x N x C
-            gloss_probabilities = gloss_probabilities.permute(1, 0, 2)
-            gloss_probabilities = gloss_probabilities.cpu().detach().numpy()
+
+            # Move blank token from index 0 to last index for TensorFlow
+            gloss_probabilities_np = gloss_probabilities.cpu().detach().numpy()
             tf_gloss_probabilities = np.concatenate(
-                (gloss_probabilities[:, :, 1:], gloss_probabilities[:, :, 0, None]),
+                (gloss_probabilities_np[:, :, 1:], gloss_probabilities_np[:, :, 0, None]),
                 axis=-1,
             )
 
+            # Lazy import tensorflow to avoid CUDA context conflicts during DDP init
+            import tensorflow as tf
+            tf.config.set_visible_devices([], "GPU")
+
             assert recognition_beam_size > 0
+            # TF expects T x N x C
+            tf_gloss_probabilities = tf_gloss_probabilities.transpose(1, 0, 2)
+            
             ctc_decode, _ = tf.nn.ctc_beam_search_decoder(
                 inputs=tf_gloss_probabilities,
                 sequence_length=batch.sgn_lengths.cpu().detach().numpy(),
                 beam_width=recognition_beam_size,
                 top_paths=1,
             )
+
             ctc_decode = ctc_decode[0]
             # Create a decoded gloss list for each sample
-            tmp_gloss_sequences = [[] for i in range(gloss_scores.shape[0])]
-            for (value_idx, dense_idx) in enumerate(ctc_decode.indices):
-                tmp_gloss_sequences[dense_idx[0]].append(
-                    ctc_decode.values[value_idx].numpy() + 1
-                )
-            decoded_gloss_sequences = []
-            for seq_idx in range(0, len(tmp_gloss_sequences)):
-                decoded_gloss_sequences.append(
-                    [x[0] for x in groupby(tmp_gloss_sequences[seq_idx])]
-                )
+            tmp_gloss_hyp = [[] for _ in range(batch.num_seqs)]
+            for (i, v) in zip(ctc_decode.indices, ctc_decode.values):
+                tmp_gloss_hyp[i[0]].append(v)
+            gloss_hypotheses = [
+                self.gls_vocab.array_to_sentence(tmp_gloss_hyp[i])
+                for i in range(batch.num_seqs)
+            ]
         else:
-            decoded_gloss_sequences = None
+            gloss_hypotheses = None
 
+        # Spoken Language Translation
         if self.do_translation:
-            # greedy decoding
-            if translation_beam_size < 2:
-                stacked_txt_output, stacked_attention_scores = greedy(
-                    encoder_hidden=encoder_hidden,
-                    encoder_output=encoder_output,
+            if translation_beam_size == 1:
+                # Greedy decoding
+                decoded_words, attention_scores = greedy(
                     src_mask=batch.sgn_mask,
                     embed=self.txt_embed,
                     bos_index=self.txt_bos_index,
                     eos_index=self.txt_eos_index,
                     decoder=self.decoder,
+                    encoder_output=encoder_output,
+                    encoder_hidden=encoder_hidden,
                     max_output_length=translation_max_output_length,
                 )
-                # batch, time, max_sgn_length
-            else:  # beam size
-                stacked_txt_output, stacked_attention_scores = beam_search(
+            else:
+                # Beam search
+                decoded_words, attention_scores = beam_search(
                     size=translation_beam_size,
-                    encoder_hidden=encoder_hidden,
-                    encoder_output=encoder_output,
                     src_mask=batch.sgn_mask,
                     embed=self.txt_embed,
-                    max_output_length=translation_max_output_length,
-                    alpha=translation_beam_alpha,
+                    bos_index=self.txt_bos_index,
                     eos_index=self.txt_eos_index,
                     pad_index=self.txt_pad_index,
-                    bos_index=self.txt_bos_index,
                     decoder=self.decoder,
+                    encoder_output=encoder_output,
+                    encoder_hidden=encoder_hidden,
+                    alpha=translation_beam_alpha,
+                    max_output_length=translation_max_output_length,
                 )
+            text_hypotheses = self.txt_vocab.arrays_to_sentences(decoded_words)
         else:
-            stacked_txt_output = stacked_attention_scores = None
+            text_hypotheses = None
+            attention_scores = None
 
-        return decoded_gloss_sequences, stacked_txt_output, stacked_attention_scores
+        return gloss_hypotheses, text_hypotheses, attention_scores
 
     def __repr__(self) -> str:
         """
