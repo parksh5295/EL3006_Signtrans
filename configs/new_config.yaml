@@ -16,11 +16,11 @@ data:
 
   # Root directory for the local CSV annotation files
   # Please ensure your how2sign_realigned_*.csv files are in this directory.
-  csv_root: "how2sign_data"
+  csv_root: "/home/work/asic-3/input_data/csv_data"
   
   # Vocabulary files will be created here if they don't exist.
-  gls_vocab: "output/gloss.vocab"
-  txt_vocab: "output/text.vocab"
+  gls_vocab: "data/gloss.vocab"
+  txt_vocab: "data/text.vocab"
   
   # Column names from the merged dataset
   sequence_key: "file_name"
