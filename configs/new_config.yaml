@@ -14,6 +14,11 @@ data:
   # The Hugging Face dataset ID for the keypoints
   hf_keypoint_dataset: "Saintbook/how2sign_keypoints"
 
+  # Limit the number of dataset items to scan for building the map.
+  # This is useful for quick testing on a subset of the data.
+  # Set to -1 or remove to scan the entire dataset.
+  dataset_subset_size: 50000
+
   # Root directory for the local CSV annotation files
   # Please ensure your how2sign_realigned_*.csv files are in this directory.
   csv_root: "/home/work/asic-3/input_data/csv_data"

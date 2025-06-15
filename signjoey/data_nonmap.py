@@ -77,6 +77,12 @@ def load_data_nonmap(data_cfg: dict) -> Tuple[Dataset, Dataset, Dataset, GlossVo
         raise IOError(f"Could not load or stream dataset '{repo_id}' from Hugging Face Hub. "
                       f"Please check repo name and your connection. Error: {e}")
 
+    # --- Limit dataset size for quick testing ---
+    subset_size = data_cfg.get("dataset_subset_size", -1)
+    if subset_size > 0:
+        print(f"Limiting dataset scan to the first {subset_size} items for speed.")
+        hf_dataset = hf_dataset.take(subset_size)
+
     # Create a mapping from SENTENCE_NAME (video clip) to its frame file keys (__key__)
     print("Creating a map from video clips to frame files from the dataset stream...")
     clip_to_frames_map = {}
